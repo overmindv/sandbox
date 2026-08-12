@@ -1,0 +1,109 @@
+schema_version: sandbox.config.v1
+
+app:
+  name: sandbox-worker
+  environment: dev
+  worker_id: ${SANDBOX_WORKER_ID}
+  shutdown_timeout_ms: 20000
+
+config:
+  languages_file: configs/languages.yaml
+  limits_file: configs/limits.yaml
+  gojudge_mount_file: configs/gojudge-mount.yaml
+
+server:
+  health_addr: 0.0.0.0:8080
+  metrics_addr: 0.0.0.0:9090
+
+feature_flags:
+  fake_executor: false
+  gojudge_executor: true
+  inline_tests: true
+  object_storage_tests: true
+
+kafka:
+  brokers:
+    - ${SANDBOX_KAFKA_BROKERS}
+  client_id: sandbox-worker-dev
+  group_id: sandbox-worker-dev
+  topics:
+    requests: sandbox.run.requests.v1
+    events: sandbox.run.events.v1
+    results: sandbox.run.results.v1
+    deadletter: sandbox.run.deadletter.v1
+  consumer:
+    auto_offset_reset: latest
+    session_timeout_ms: 30000
+    heartbeat_interval_ms: 3000
+    max_poll_records: 32
+    commit_after_result_publish: true
+  producer:
+    acks: all
+    idempotent: true
+    compression: zstd
+    linger_ms: 10
+    request_timeout_ms: 15000
+
+scheduler:
+  max_in_flight: 16
+  max_in_flight_per_language:
+    python: 16
+    javascript: 4
+    go: 4
+    cpp: 2
+  admission:
+    reject_when_executor_unhealthy: true
+    max_queue_age_ms: 600000
+
+executor:
+  type: gojudge
+  client_timeout_ms: 20000
+  fake:
+    default_status: passed
+    latency_ms: 50
+    echo_request_metadata: false
+  gojudge:
+    base_url: ${SANDBOX_GOJUDGE_BASE_URL}
+    request_timeout_ms: 20000
+    max_idle_connections: 32
+
+tests:
+  inline:
+    enabled: true
+    max_files: 16
+    max_total_bytes: 524288
+  object_storage:
+    enabled: true
+    provider: s3
+    bucket: ${SANDBOX_TESTS_BUCKET}
+    endpoint: ${SANDBOX_TESTS_ENDPOINT}
+    region: ${SANDBOX_TESTS_REGION}
+    cache_ttl_ms: 300000
+
+storage:
+  type: postgres
+  postgres:
+    dsn: ${SANDBOX_POSTGRES_DSN}
+    max_open_connections: 10
+    max_idle_connections: 5
+
+security:
+  network:
+    allow_user_code_network: false
+    deny_metadata_endpoints: true
+  filesystem:
+    allow_absolute_paths: false
+    allow_parent_segments: false
+    allow_symlinks: false
+    max_files: 64
+  logs:
+    redact_secrets: true
+    max_stdout_bytes: 32768
+    max_stderr_bytes: 32768
+
+observability:
+  log_level: info
+  log_format: json
+  metrics_enabled: true
+  tracing_enabled: true
+  audit_enabled: true

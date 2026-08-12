@@ -1,0 +1,26 @@
+schema_version: sandbox.gojudge.mount.v1
+
+workspace:
+  root: /workspace
+  writable: true
+  max_bytes_from_limits: workspace_bytes
+
+copy_in:
+  source_root: /workspace
+  reject_absolute_paths: true
+  reject_parent_segments: true
+  reject_symlinks: true
+
+copy_out:
+  allowed_paths:
+    - stdout
+    - stderr
+    - pytest-report.json
+  max_file_bytes: 1048576
+  reject_symlinks: true
+
+runtime:
+  network: disabled
+  stdin: disabled
+  stdout: captured
+  stderr: captured
