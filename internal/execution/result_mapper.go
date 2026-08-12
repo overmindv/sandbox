@@ -24,6 +24,19 @@ type ExecutionResult struct {
 	Error           *contracts.RunError
 }
 
+type RawExecutionResult struct {
+	ExitCode        int
+	Stdout          string
+	Stderr          string
+	ReportFiles     map[string][]byte
+	TimedOut        bool
+	MemoryExceeded  bool
+	OutputExceeded  bool
+	CPUms           int
+	MemoryPeakBytes int64
+	RunMS           int
+}
+
 type ResultTimingInput struct {
 	QueueTime time.Duration
 	RunTime   time.Duration

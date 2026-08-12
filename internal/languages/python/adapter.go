@@ -2,6 +2,7 @@ package python
 
 import (
 	"context"
+	"fmt"
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
@@ -34,7 +35,6 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 	command.Adapter = AdapterName
 	command.RuntimeImage = resolved.Version.RuntimeImage
 	command.WorkingDir = resolved.Version.Execution.WorkingDir
-	command.Argv = append([]string(nil), resolved.Version.Execution.Command.Argv...)
 	if resolved.Version.Execution.Compile != nil {
 		command.CompileArgv = append([]string(nil), resolved.Version.Execution.Compile.Argv...)
 	}
@@ -42,17 +42,38 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 	if command.Entrypoint == "" {
 		command.Entrypoint = resolved.Version.FilePolicy.DefaultEntrypoint
 	}
+	if command.Entrypoint == "" {
+		command.Entrypoint = DefaultEntrypoint
+	}
 	if command.TestEntrypoint == "" {
 		command.TestEntrypoint = resolved.Version.FilePolicy.DefaultTestEntrypoint
 	}
+	if command.TestEntrypoint == "" {
+		command.TestEntrypoint = DefaultTestEntrypoint
+	}
+	command.Argv = PytestArgv(resolved.Version.Execution.Command.Argv, command.TestEntrypoint)
+	command.Environment["SANDBOX_PYTEST_REPORT"] = ReportPath
+	command.CopyOut = []string{ReportPath}
+	command.Files = buildWorkspaceFiles(command.Files)
+	command.RuntimeLimits = MapLimits(req.Limits)
 	return command, nil
 }
 
 func validatePythonFiles(req contracts.RunRequest, resolved languages.ResolvedLanguage) error {
+	maxFiles := resolved.Version.FilePolicy.MaxFiles
+	if maxFiles > 0 && len(req.Code.Files)+len(req.Tests.Files) > maxFiles {
+		return fmt.Errorf("python workspace contains %d files, max is %d", len(req.Code.Files)+len(req.Tests.Files), maxFiles)
+	}
 	if err := languages.ValidateAllowedExtensionsForAdapter(req.Code.Files, resolved.Version.FilePolicy.AllowedExtensions); err != nil {
 		return err
 	}
 	if err := languages.ValidateAllowedExtensionsForAdapter(req.Tests.Files, resolved.Version.FilePolicy.AllowedExtensions); err != nil {
+		return err
+	}
+	if err := rejectReservedPaths(req.Code.Files); err != nil {
+		return err
+	}
+	if err := rejectReservedPaths(req.Tests.Files); err != nil {
 		return err
 	}
 	return nil

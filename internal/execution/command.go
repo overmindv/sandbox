@@ -11,8 +11,9 @@ import (
 type FileKind string
 
 const (
-	FileKindSource FileKind = "source"
-	FileKindTest   FileKind = "test"
+	FileKindSource  FileKind = "source"
+	FileKindTest    FileKind = "test"
+	FileKindHarness FileKind = "harness"
 )
 
 type ExecutionCommand struct {
@@ -28,15 +29,27 @@ type ExecutionCommand struct {
 	Argv           []string
 	CompileArgv    []string
 	Environment    map[string]string
+	CopyOut        []string
 	Entrypoint     string
 	TestEntrypoint string
 	TestMode       contracts.TestMode
 	TestSource     contracts.TestSource
 	Files          []ExecutionFile
 	Limits         contracts.Limits
+	RuntimeLimits  RuntimeLimits
 	Metadata       map[string]any
 	TraceID        string
 	CreatedAt      time.Time
+}
+
+type RuntimeLimits struct {
+	CPUms          int
+	WallMS         int
+	MemoryBytes    int64
+	PIDs           int
+	StdoutBytes    int
+	StderrBytes    int
+	WorkspaceBytes int64
 }
 
 type ExecutionFile struct {
@@ -83,10 +96,23 @@ func CommandFromRunRequest(req contracts.RunRequest) (ExecutionCommand, error) {
 		TestSource:     req.Tests.Source,
 		Files:          files,
 		Limits:         req.Limits,
+		RuntimeLimits:  RuntimeLimitsFromRequest(req.Limits),
 		Metadata:       req.Metadata,
 		TraceID:        req.TraceID,
 		CreatedAt:      req.CreatedAt,
 	}, nil
+}
+
+func RuntimeLimitsFromRequest(limits contracts.Limits) RuntimeLimits {
+	return RuntimeLimits{
+		CPUms:          limits.CPUms,
+		WallMS:         limits.Wallms,
+		MemoryBytes:    int64(limits.MemoryMB) * 1024 * 1024,
+		PIDs:           limits.PIDs,
+		StdoutBytes:    limits.StdoutBytes,
+		StderrBytes:    limits.StderrBytes,
+		WorkspaceBytes: int64(limits.WorkspaceBytes),
+	}
 }
 
 func decodeContent(contentB64 string) ([]byte, error) {

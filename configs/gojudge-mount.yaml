@@ -15,7 +15,7 @@ copy_out:
   allowed_paths:
     - stdout
     - stderr
-    - pytest-report.json
+    - .sandbox/pytest-report.json
   max_file_bytes: 1048576
   reject_symlinks: true
 
