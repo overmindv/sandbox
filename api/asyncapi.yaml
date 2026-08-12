@@ -1,0 +1,105 @@
+asyncapi: 3.0.0
+info:
+  title: Overmind Sandbox Kafka API
+  version: 1.0.0
+  description: Kafka contracts for sandbox code execution requests, lifecycle events, results, and dead-letter messages.
+defaultContentType: application/json
+servers:
+  local:
+    host: localhost:9092
+    protocol: kafka
+channels:
+  sandboxRunRequestsV1:
+    address: sandbox.run.requests.v1
+    messages:
+      SandboxRunRequest:
+        $ref: '#/components/messages/SandboxRunRequest'
+  sandboxRunEventsV1:
+    address: sandbox.run.events.v1
+    messages:
+      SandboxRunEvent:
+        $ref: '#/components/messages/SandboxRunEvent'
+  sandboxRunResultsV1:
+    address: sandbox.run.results.v1
+    messages:
+      SandboxRunResult:
+        $ref: '#/components/messages/SandboxRunResult'
+  sandboxRunDeadletterV1:
+    address: sandbox.run.deadletter.v1
+    messages:
+      SandboxRunDeadletter:
+        $ref: '#/components/messages/SandboxRunDeadletter'
+operations:
+  consumeRunRequests:
+    action: receive
+    channel:
+      $ref: '#/channels/sandboxRunRequestsV1'
+    messages:
+      - $ref: '#/channels/sandboxRunRequestsV1/messages/SandboxRunRequest'
+  publishRunEvents:
+    action: send
+    channel:
+      $ref: '#/channels/sandboxRunEventsV1'
+    messages:
+      - $ref: '#/channels/sandboxRunEventsV1/messages/SandboxRunEvent'
+  publishRunResults:
+    action: send
+    channel:
+      $ref: '#/channels/sandboxRunResultsV1'
+    messages:
+      - $ref: '#/channels/sandboxRunResultsV1/messages/SandboxRunResult'
+  publishRunDeadletter:
+    action: send
+    channel:
+      $ref: '#/channels/sandboxRunDeadletterV1'
+    messages:
+      - $ref: '#/channels/sandboxRunDeadletterV1/messages/SandboxRunDeadletter'
+components:
+  messages:
+    SandboxRunRequest:
+      name: SandboxRunRequest
+      title: Sandbox run request v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/attemptKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.request.v1.json'
+    SandboxRunEvent:
+      name: SandboxRunEvent
+      title: Sandbox run event v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/attemptKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.event.v1.json'
+    SandboxRunResult:
+      name: SandboxRunResult
+      title: Sandbox run result v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/attemptKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.result.v1.json'
+    SandboxRunDeadletter:
+      name: SandboxRunDeadletter
+      title: Sandbox run dead-letter v1
+      contentType: application/json
+      payload:
+        $ref: './schemas/sandbox.run.deadletter.v1.json'
+  messageTraits:
+    attemptKeyed:
+      headers:
+        type: object
+        additionalProperties: false
+        properties:
+          x-trace-id:
+            type: string
+          x-schema-version:
+            type: string
+          x-producer:
+            type: string
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: attempt_id encoded as UTF-8.
