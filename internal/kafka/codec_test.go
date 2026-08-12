@@ -15,19 +15,19 @@ func TestRunRequestSerializationRoundTrip(t *testing.T) {
 
 	encoded, err := EncodeRunRequest(req)
 	if err != nil {
-		t.Fatalf("encode request: %v", err)
+		t.Errorf("encode request: %v", err)
 	}
 
 	decoded, err := DecodeRunRequest(encoded)
 	if err != nil {
-		t.Fatalf("decode request: %v", err)
+		t.Errorf("decode request: %v", err)
 	}
 
 	if decoded.AttemptID != req.AttemptID {
-		t.Fatalf("expected attempt_id %q, got %q", req.AttemptID, decoded.AttemptID)
+		t.Errorf("expected attempt_id %q, got %q", req.AttemptID, decoded.AttemptID)
 	}
 	if !decoded.CreatedAt.Equal(req.CreatedAt) {
-		t.Fatalf("expected created_at %s, got %s", req.CreatedAt, decoded.CreatedAt)
+		t.Errorf("expected created_at %s, got %s", req.CreatedAt, decoded.CreatedAt)
 	}
 }
 
@@ -35,22 +35,22 @@ func TestDecodeRunRequestRejectsUnknownFields(t *testing.T) {
 	req := validKafkaRunRequest()
 	encoded, err := EncodeRunRequest(req)
 	if err != nil {
-		t.Fatalf("encode request: %v", err)
+		t.Errorf("encode request: %v", err)
 	}
 
 	var raw map[string]any
 	if err := json.Unmarshal(encoded, &raw); err != nil {
-		t.Fatalf("unmarshal request: %v", err)
+		t.Errorf("unmarshal request: %v", err)
 	}
 	raw["unexpected"] = true
 	encoded, err = json.Marshal(raw)
 	if err != nil {
-		t.Fatalf("marshal request with unknown field: %v", err)
+		t.Errorf("marshal request with unknown field: %v", err)
 	}
 
 	_, err = DecodeRunRequest(encoded)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("expected unknown field error, got %v", err)
+		t.Errorf("expected unknown field error, got %v", err)
 	}
 }
 
@@ -101,26 +101,26 @@ func TestEventResultAndDeadLetterSerialization(t *testing.T) {
 
 	eventBytes, err := EncodeRunEvent(event)
 	if err != nil {
-		t.Fatalf("encode event: %v", err)
+		t.Errorf("encode event: %v", err)
 	}
 	if _, err := DecodeRunEvent(eventBytes); err != nil {
-		t.Fatalf("decode event: %v", err)
+		t.Errorf("decode event: %v", err)
 	}
 
 	resultBytes, err := EncodeRunResult(result)
 	if err != nil {
-		t.Fatalf("encode result: %v", err)
+		t.Errorf("encode result: %v", err)
 	}
 	if _, err := DecodeRunResult(resultBytes); err != nil {
-		t.Fatalf("decode result: %v", err)
+		t.Errorf("decode result: %v", err)
 	}
 
 	deadLetterBytes, err := EncodeRunDeadLetter(deadLetter)
 	if err != nil {
-		t.Fatalf("encode dead letter: %v", err)
+		t.Errorf("encode dead letter: %v", err)
 	}
 	if _, err := DecodeRunDeadLetter(deadLetterBytes); err != nil {
-		t.Fatalf("decode dead letter: %v", err)
+		t.Errorf("decode dead letter: %v", err)
 	}
 }
 

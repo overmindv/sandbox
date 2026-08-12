@@ -91,6 +91,13 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 	return nil
 }
 
+func (p *Processor) Close() error {
+	if p == nil {
+		return nil
+	}
+	return errors.Join(p.Consumer.Close(), p.Producer.Close())
+}
+
 func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	traceID := msg.Headers[HeaderTraceID]
 	ctx = observability.WithTraceID(ctx, traceID)
@@ -180,18 +187,7 @@ func (p *Processor) publishDeadLetter(ctx context.Context, msg Message, reason s
 }
 
 func (p *Processor) messageForResult(result contracts.RunResult) (Message, error) {
-	value, err := EncodeRunResult(result)
-	if err != nil {
-		return Message{}, err
-	}
-
-	return Message{
-		Topic:   p.Topics.Results,
-		Key:     messageKey(result.AttemptID, nil),
-		Value:   value,
-		Headers: resultHeaders(result.SchemaVersion, result.TraceID, p.WorkerID),
-		Time:    p.now(),
-	}, nil
+	return MessageForResult(p.Topics.Results, result, p.WorkerID)
 }
 
 func (p *Processor) messageForDeadLetter(deadLetter contracts.RunDeadLetter) (Message, error) {
@@ -221,6 +217,21 @@ func MessageForEvent(topic string, event contracts.RunEvent, workerID string) (M
 		Value:   value,
 		Headers: resultHeaders(event.SchemaVersion, event.TraceID, workerID),
 		Time:    event.CreatedAt,
+	}, nil
+}
+
+func MessageForResult(topic string, result contracts.RunResult, workerID string) (Message, error) {
+	value, err := EncodeRunResult(result)
+	if err != nil {
+		return Message{}, err
+	}
+
+	return Message{
+		Topic:   topic,
+		Key:     messageKey(result.AttemptID, nil),
+		Value:   value,
+		Headers: resultHeaders(result.SchemaVersion, result.TraceID, workerID),
+		Time:    result.CreatedAt,
 	}, nil
 }
 

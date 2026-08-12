@@ -19,6 +19,13 @@ func (w *Worker) Start(ctx context.Context) error {
 		w.started.Store(false)
 		return err
 	}
+	if w.dispatcher != nil {
+		if err := w.dispatcher.Start(ctx); err != nil {
+			_ = w.healthServer.Shutdown(context.Background())
+			w.started.Store(false)
+			return err
+		}
+	}
 	w.healthState.SetReady(true)
 	w.logger.Info(ctx, "worker started", "worker_id", w.cfg.App.WorkerID, "environment", w.cfg.App.Environment)
 	return nil
@@ -41,6 +48,16 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	}
 	w.healthState.SetReady(false)
 	w.logger.Info(ctx, "worker shutting down", "worker_id", w.cfg.App.WorkerID)
+	if w.dispatcher != nil {
+		if err := w.dispatcher.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	if w.processor != nil {
+		if err := w.processor.Close(); err != nil {
+			return err
+		}
+	}
 	if err := w.healthServer.Shutdown(ctx); err != nil {
 		return err
 	}

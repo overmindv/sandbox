@@ -25,11 +25,11 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	logger := observability.NewLogger(cfg.Observability.LogLevel, cfg.Observability.LogFormat, &logBuffer)
 	worker, err := app.NewWorker(cfg, logger)
 	if err != nil {
-		t.Fatalf("new worker: %v", err)
+		t.Errorf("new worker: %v", err)
 	}
 
 	if err := worker.Start(context.Background()); err != nil {
-		t.Fatalf("start worker: %v", err)
+		t.Errorf("start worker: %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -40,50 +40,50 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	url := "http://" + worker.HealthAddr() + "/healthz"
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		t.Fatalf("build health request: %v", err)
+		t.Errorf("build health request: %v", err)
 	}
 	req.Header.Set(observability.TraceIDHeader, "trace-smoke")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("call health endpoint: %v", err)
+		t.Errorf("call health endpoint: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected health status 200, got %d", resp.StatusCode)
+		t.Errorf("expected health status 200, got %d", resp.StatusCode)
 	}
 	if got := resp.Header.Get(observability.TraceIDHeader); got != "trace-smoke" {
-		t.Fatalf("expected trace response header, got %q", got)
+		t.Errorf("expected trace response header, got %q", got)
 	}
 
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode health response: %v", err)
+		t.Errorf("decode health response: %v", err)
 	}
 	if payload["status"] != "ok" {
-		t.Fatalf("expected status ok, got %#v", payload["status"])
+		t.Errorf("expected status ok, got %#v", payload["status"])
 	}
 	if payload["ready"] != true {
-		t.Fatalf("expected ready=true, got %#v", payload["ready"])
+		t.Errorf("expected ready=true, got %#v", payload["ready"])
 	}
 	if payload["trace_id"] != "trace-smoke" {
-		t.Fatalf("expected trace_id in response, got %#v", payload["trace_id"])
+		t.Errorf("expected trace_id in response, got %#v", payload["trace_id"])
 	}
 
 	readyResp, err := http.Get("http://" + worker.HealthAddr() + "/readyz")
 	if err != nil {
-		t.Fatalf("call readiness endpoint: %v", err)
+		t.Errorf("call readiness endpoint: %v", err)
 	}
 	defer readyResp.Body.Close()
 	if readyResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected readiness status 200, got %d", readyResp.StatusCode)
+		t.Errorf("expected readiness status 200, got %d", readyResp.StatusCode)
 	}
 
 	if !strings.Contains(logBuffer.String(), "worker started") {
-		t.Fatalf("expected startup log, got %s", logBuffer.String())
+		t.Errorf("expected startup log, got %s", logBuffer.String())
 	}
 	if !strings.Contains(logBuffer.String(), "trace-smoke") {
-		t.Fatalf("expected trace_id in logs, got %s", logBuffer.String())
+		t.Errorf("expected trace_id in logs, got %s", logBuffer.String())
 	}
 }

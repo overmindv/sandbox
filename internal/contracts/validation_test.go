@@ -11,7 +11,7 @@ func TestValidateRunRequestAcceptsValidInlinePython(t *testing.T) {
 	req := validRunRequest()
 
 	if err := ValidateRunRequest(req); err != nil {
-		t.Fatalf("expected request to be valid: %v", err)
+		t.Errorf("expected request to be valid: %v", err)
 	}
 }
 
@@ -35,7 +35,7 @@ func TestValidateRunRequestRejectsUnsafePaths(t *testing.T) {
 
 			err := ValidateRunRequest(req)
 			if err == nil {
-				t.Fatalf("expected %q to be rejected", tt.path)
+				t.Errorf("expected %q to be rejected", tt.path)
 			}
 		})
 	}
@@ -47,7 +47,7 @@ func TestValidateRunRequestRejectsInvalidBase64(t *testing.T) {
 
 	err := ValidateRunRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "content_b64") {
-		t.Fatalf("expected content_b64 validation error, got: %v", err)
+		t.Errorf("expected content_b64 validation error, got: %v", err)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestValidateRunRequestRejectsDuplicateFiles(t *testing.T) {
 
 	err := ValidateRunRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "duplicate file path") {
-		t.Fatalf("expected duplicate file validation error, got: %v", err)
+		t.Errorf("expected duplicate file validation error, got: %v", err)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestValidateRunRequestRejectsLimitsOverHardMax(t *testing.T) {
 
 	err := ValidateRunRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "limits.memory_mb") {
-		t.Fatalf("expected memory limit validation error, got: %v", err)
+		t.Errorf("expected memory limit validation error, got: %v", err)
 	}
 }
 
@@ -81,19 +81,19 @@ func TestValidateRunRequestRejectsObjectStorageWithoutChecksum(t *testing.T) {
 
 	err := ValidateRunRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "tests.checksum_sha256") {
-		t.Fatalf("expected checksum validation error, got: %v", err)
+		t.Errorf("expected checksum validation error, got: %v", err)
 	}
 }
 
 func TestExecutionStatusValidityAndTerminalState(t *testing.T) {
 	if !StatusPassed.Valid() || !StatusPassed.Terminal() {
-		t.Fatal("passed must be valid and terminal")
+		t.Error("passed must be valid and terminal")
 	}
 	if !StatusRunning.Valid() || StatusRunning.Terminal() {
-		t.Fatal("running must be valid and non-terminal")
+		t.Error("running must be valid and non-terminal")
 	}
 	if ExecutionStatus("unknown").Valid() {
-		t.Fatal("unknown status must be invalid")
+		t.Error("unknown status must be invalid")
 	}
 }
 

@@ -35,6 +35,16 @@ This means production secrets and deployment-specific endpoints must come from e
 
 The selected executor is `executor.type`. The corresponding feature flag must also be enabled. For example, `executor.type: gojudge` requires `feature_flags.gojudge_executor: true`.
 
+## Fake Executor
+
+The fake executor is intended for local and contract tests. It does not run untrusted code. It returns a deterministic result from either request metadata or inline file content:
+
+- `metadata.fake_status: success|fail|tle|mle`
+- `metadata.fake_result: success|fail|tle|mle`
+- file marker such as `fake_status=fail`
+
+The marker may live in code or test files. This lets the full Kafka-to-result pipeline be tested before go-judge is available.
+
 ## Environment Mapping
 
 Initial environment variables:

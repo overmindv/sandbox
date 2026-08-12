@@ -12,14 +12,14 @@ func TestLoadLocalConfig(t *testing.T) {
 
 	cfg, err := Load(filepath.Join("..", "..", "configs", "local.yaml"))
 	if err != nil {
-		t.Fatalf("load local config: %v", err)
+		t.Errorf("load local config: %v", err)
 	}
 
 	if cfg.App.Environment != "local" {
-		t.Fatalf("expected local environment, got %q", cfg.App.Environment)
+		t.Errorf("expected local environment, got %q", cfg.App.Environment)
 	}
 	if cfg.Executor.Type != "fake" {
-		t.Fatalf("expected fake executor, got %q", cfg.Executor.Type)
+		t.Errorf("expected fake executor, got %q", cfg.Executor.Type)
 	}
 }
 
@@ -33,17 +33,17 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 
 	cfg, err := Load(filepath.Join("..", "..", "configs", "local.yaml"))
 	if err != nil {
-		t.Fatalf("load config with env overrides: %v", err)
+		t.Errorf("load config with env overrides: %v", err)
 	}
 
 	if cfg.Executor.Type != "gojudge" {
-		t.Fatalf("expected env executor override, got %q", cfg.Executor.Type)
+		t.Errorf("expected env executor override, got %q", cfg.Executor.Type)
 	}
 	if cfg.Executor.GoJudge.BaseURL != "http://gojudge.test" {
-		t.Fatalf("expected env gojudge URL override, got %q", cfg.Executor.GoJudge.BaseURL)
+		t.Errorf("expected env gojudge URL override, got %q", cfg.Executor.GoJudge.BaseURL)
 	}
 	if len(cfg.Kafka.Brokers) != 2 {
-		t.Fatalf("expected two kafka brokers, got %#v", cfg.Kafka.Brokers)
+		t.Errorf("expected two kafka brokers, got %#v", cfg.Kafka.Brokers)
 	}
 }
 
@@ -55,7 +55,7 @@ func clearSandboxEnv(t *testing.T) {
 		if ok && strings.HasPrefix(key, "SANDBOX_") {
 			original[key] = os.Getenv(key)
 			if err := os.Unsetenv(key); err != nil {
-				t.Fatalf("unset %s: %v", key, err)
+				t.Errorf("unset %s: %v", key, err)
 			}
 		}
 	}

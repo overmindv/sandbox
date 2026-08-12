@@ -25,28 +25,28 @@ func TestProcessorMalformedMessagePublishesDLQAndCommits(t *testing.T) {
 	processor := testProcessor(t, consumer, producer, nil)
 
 	if err := processor.ProcessOnce(context.Background()); err != nil {
-		t.Fatalf("process once: %v", err)
+		t.Errorf("process once: %v", err)
 	}
 
 	if len(consumer.committed) != 1 {
-		t.Fatalf("expected one committed message, got %d", len(consumer.committed))
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
 	}
 	if len(producer.messages) != 1 {
-		t.Fatalf("expected one published message, got %d", len(producer.messages))
+		t.Errorf("expected one published message, got %d", len(producer.messages))
 	}
 	if producer.messages[0].Topic != processor.Topics.DeadLetter {
-		t.Fatalf("expected deadletter topic, got %q", producer.messages[0].Topic)
+		t.Errorf("expected deadletter topic, got %q", producer.messages[0].Topic)
 	}
 
 	deadLetter, err := DecodeRunDeadLetter(producer.messages[0].Value)
 	if err != nil {
-		t.Fatalf("decode dead letter: %v", err)
+		t.Errorf("decode dead letter: %v", err)
 	}
 	if deadLetter.Reason != "malformed_json" {
-		t.Fatalf("expected malformed_json reason, got %q", deadLetter.Reason)
+		t.Errorf("expected malformed_json reason, got %q", deadLetter.Reason)
 	}
 	if deadLetter.OriginalKey == nil || *deadLetter.OriginalKey != "raw-key" {
-		t.Fatalf("expected original key raw-key, got %#v", deadLetter.OriginalKey)
+		t.Errorf("expected original key raw-key, got %#v", deadLetter.OriginalKey)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	req.Code.Files[0].Path = "../solution.py"
 	payload, err := EncodeRunRequest(req)
 	if err != nil {
-		t.Fatalf("encode request: %v", err)
+		t.Errorf("encode request: %v", err)
 	}
 
 	consumer := &fakeConsumer{
@@ -74,42 +74,42 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	processor := testProcessor(t, consumer, producer, nil)
 
 	if err := processor.ProcessOnce(context.Background()); err != nil {
-		t.Fatalf("process once: %v", err)
+		t.Errorf("process once: %v", err)
 	}
 
 	if len(consumer.committed) != 1 {
-		t.Fatalf("expected one committed message, got %d", len(consumer.committed))
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
 	}
 	if len(producer.messages) != 2 {
-		t.Fatalf("expected result and DLQ messages, got %d", len(producer.messages))
+		t.Errorf("expected result and DLQ messages, got %d", len(producer.messages))
 	}
 
 	result, err := DecodeRunResult(producer.messages[0].Value)
 	if err != nil {
-		t.Fatalf("decode result: %v", err)
+		t.Errorf("decode result: %v", err)
 	}
 	if producer.messages[0].Topic != processor.Topics.Results {
-		t.Fatalf("expected result topic, got %q", producer.messages[0].Topic)
+		t.Errorf("expected result topic, got %q", producer.messages[0].Topic)
 	}
 	if result.Status != contracts.StatusInvalidRequest {
-		t.Fatalf("expected invalid_request status, got %q", result.Status)
+		t.Errorf("expected invalid_request status, got %q", result.Status)
 	}
 	if result.Error == nil || result.Error.Retryable {
-		t.Fatalf("expected non-retryable result error, got %#v", result.Error)
+		t.Errorf("expected non-retryable result error, got %#v", result.Error)
 	}
 
 	deadLetter, err := DecodeRunDeadLetter(producer.messages[1].Value)
 	if err != nil {
-		t.Fatalf("decode dead letter: %v", err)
+		t.Errorf("decode dead letter: %v", err)
 	}
 	if producer.messages[1].Topic != processor.Topics.DeadLetter {
-		t.Fatalf("expected deadletter topic, got %q", producer.messages[1].Topic)
+		t.Errorf("expected deadletter topic, got %q", producer.messages[1].Topic)
 	}
 	if deadLetter.Reason != "invalid_request" {
-		t.Fatalf("expected invalid_request reason, got %q", deadLetter.Reason)
+		t.Errorf("expected invalid_request reason, got %q", deadLetter.Reason)
 	}
 	if deadLetter.OriginalPayloadB64 == nil {
-		t.Fatal("expected original payload to be preserved")
+		t.Error("expected original payload to be preserved")
 	}
 }
 
@@ -117,7 +117,7 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	req := validKafkaRunRequest()
 	payload, err := EncodeRunRequest(req)
 	if err != nil {
-		t.Fatalf("encode request: %v", err)
+		t.Errorf("encode request: %v", err)
 	}
 
 	consumer := &fakeConsumer{
@@ -137,7 +137,7 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	handler := RunRequestHandlerFunc(func(ctx context.Context, envelope Message, decoded contracts.RunRequest) error {
 		handled = true
 		if decoded.AttemptID != req.AttemptID {
-			t.Fatalf("expected attempt_id %q, got %q", req.AttemptID, decoded.AttemptID)
+			t.Errorf("expected attempt_id %q, got %q", req.AttemptID, decoded.AttemptID)
 		}
 		event := contracts.RunEvent{
 			SchemaVersion: contracts.RunEventSchemaVersion,
@@ -158,24 +158,24 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	processor := testProcessor(t, consumer, producer, handler)
 
 	if err := processor.ProcessOnce(context.Background()); err != nil {
-		t.Fatalf("process once: %v", err)
+		t.Errorf("process once: %v", err)
 	}
 	if !handled {
-		t.Fatal("expected handler to be called")
+		t.Error("expected handler to be called")
 	}
 	if len(consumer.committed) != 1 {
-		t.Fatalf("expected one committed message, got %d", len(consumer.committed))
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
 	}
 	if len(producer.messages) != 1 {
-		t.Fatalf("expected one event message, got %d", len(producer.messages))
+		t.Errorf("expected one event message, got %d", len(producer.messages))
 	}
 
 	event, err := DecodeRunEvent(producer.messages[0].Value)
 	if err != nil {
-		t.Fatalf("decode event: %v", err)
+		t.Errorf("decode event: %v", err)
 	}
 	if event.EventType != contracts.EventAccepted {
-		t.Fatalf("expected accepted event, got %q", event.EventType)
+		t.Errorf("expected accepted event, got %q", event.EventType)
 	}
 }
 
@@ -183,7 +183,7 @@ func testProcessor(t *testing.T, consumer Consumer, producer Producer, handler R
 	t.Helper()
 	processor, err := NewProcessor(consumer, producer, testTopics(), "worker-1", handler, nil)
 	if err != nil {
-		t.Fatalf("new processor: %v", err)
+		t.Errorf("new processor: %v", err)
 	}
 	processor.Now = fixedKafkaTime
 	return processor

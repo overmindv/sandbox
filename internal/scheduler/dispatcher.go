@@ -30,6 +30,7 @@ type JobResult struct {
 	JobID     string
 	AttemptID string
 	Status    string
+	Output    any
 	StartedAt time.Time
 	EndedAt   time.Time
 	QueueTime time.Duration
@@ -44,12 +45,12 @@ type JobReceipt struct {
 }
 
 type JobHandler interface {
-	HandleJob(ctx context.Context, job Job) error
+	HandleJob(ctx context.Context, job Job) (any, error)
 }
 
-type JobHandlerFunc func(ctx context.Context, job Job) error
+type JobHandlerFunc func(ctx context.Context, job Job) (any, error)
 
-func (f JobHandlerFunc) HandleJob(ctx context.Context, job Job) error {
+func (f JobHandlerFunc) HandleJob(ctx context.Context, job Job) (any, error) {
 	return f(ctx, job)
 }
 
@@ -264,13 +265,21 @@ func (d *Dispatcher) runQueuedJob(workerIndex int, item queuedJob) {
 	defer cancelJob()
 
 	d.logger.Debug(jobCtx, "scheduler job started", "worker_index", workerIndex, "job_id", job.ID, "attempt_id", job.AttemptID, "language", job.LanguageID)
-	handlerErr := make(chan error, 1)
+	type handlerResult struct {
+		output any
+		err    error
+	}
+	handlerResultCh := make(chan handlerResult, 1)
 	go func() {
-		handlerErr <- d.handler.HandleJob(jobCtx, job)
+		output, err := d.handler.HandleJob(jobCtx, job)
+		handlerResultCh <- handlerResult{output: output, err: err}
 	}()
 
+	var output any
 	select {
-	case err = <-handlerErr:
+	case result := <-handlerResultCh:
+		output = result.output
+		err = result.err
 	case <-jobCtx.Done():
 		err = jobCtx.Err()
 	}
@@ -292,6 +301,7 @@ func (d *Dispatcher) runQueuedJob(workerIndex int, item queuedJob) {
 		JobID:     job.ID,
 		AttemptID: job.AttemptID,
 		Status:    status,
+		Output:    output,
 		StartedAt: startedAt,
 		EndedAt:   endedAt,
 		QueueTime: queueTime,
