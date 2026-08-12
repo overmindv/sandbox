@@ -87,8 +87,8 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	if resultMessage.Topic != cfg.Kafka.Topics.Results {
 		t.Errorf("expected result topic %q, got %q", cfg.Kafka.Topics.Results, resultMessage.Topic)
 	}
-	if string(resultMessage.Key) != req.AttemptID {
-		t.Errorf("expected result key %q, got %q", req.AttemptID, string(resultMessage.Key))
+	if string(resultMessage.Key) != req.SubmissionID {
+		t.Errorf("expected result key %q, got %q", req.SubmissionID, string(resultMessage.Key))
 	}
 
 	result, err := kafka.DecodeRunResult(resultMessage.Value)

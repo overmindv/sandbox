@@ -4,20 +4,32 @@ This document defines the first stable Kafka contract for the sandbox service.
 
 ## Topics
 
+Canonical topic names come from `../infra`.
+
 | Topic | Direction | Purpose |
 | --- | --- | --- |
-| `sandbox.run.requests.v1` | consume | Code execution requests. |
-| `sandbox.run.events.v1` | produce | Lifecycle events for UI, audit, and observability. |
-| `sandbox.run.results.v1` | produce | Final execution result. |
-| `sandbox.run.deadletter.v1` | produce | Messages that cannot be processed safely. |
+| `code-execution.requests.v1` | consume | Code execution requests. Created by infra. |
+| `code-execution.results.v1` | produce | Final execution result. Created by infra. |
+| `code-execution.events.v1` | produce | Optional lifecycle events for UI, audit, and observability. Sandbox extension; infra provisioning is still required before production use. |
+| `code-execution.deadletter.v1` | produce | Optional messages that cannot be processed safely. Sandbox extension; infra provisioning is still required before production use. |
 
-All topic names include a major contract version. New backward-incompatible contracts use a new topic suffix, for example `sandbox.run.requests.v2`.
+All topic names include a major contract version. New backward-incompatible contracts use a new topic suffix, for example `code-execution.requests.v2`.
+
+Infra defaults:
+
+- Docker Compose from host: `localhost:29092`.
+- Docker Compose from another container on `overmindv_default`: `kafka:9092`.
+- Kubernetes namespace: `kafka:9092`.
+- Partitions: `3`.
+- Replication factor: `1` in the current single-broker environment.
+- Retention: `604800000 ms` (seven days).
+- Kafka auto topic creation: disabled.
 
 ## Message Key
 
-Use `attempt_id` as the Kafka message key for requests, events, and results.
+Use the solution UUID as the Kafka message key. In the sandbox domain model this is `submission_id`.
 
-`attempt_id` gives stable ordering for events related to the same execution attempt and is the primary idempotency key. Consumers must treat duplicate `attempt_id` messages as possible and handle them safely.
+`submission_id` keeps a solution request, retries, events, and final result ordered in one partition. Consumers must treat duplicate messages as possible and deduplicate with their domain idempotency key, usually `attempt_id` for execution attempts and `submission_id` for the business solution.
 
 ## Schemas
 

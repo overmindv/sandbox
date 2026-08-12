@@ -47,6 +47,16 @@ The marker may live in code or test files. This lets the full Kafka-to-result pi
 
 ## Environment Mapping
 
+Kafka defaults are aligned with `../infra`:
+
+- host development broker: `localhost:29092`;
+- Docker/Kubernetes broker: `kafka:9092`;
+- request topic: `code-execution.requests.v1`;
+- result topic: `code-execution.results.v1`;
+- sandbox consumer group: `sandbox-code-execution-v1`.
+
+`code-execution.events.v1` and `code-execution.deadletter.v1` are currently sandbox-side extensions. Infra creates only request/result topics today, so those topics must be provisioned before event/DLQ publishing is enabled in a shared environment.
+
 Initial environment variables:
 
 | Env | Config field |
@@ -55,6 +65,12 @@ Initial environment variables:
 | `SANDBOX_ENV` | `app.environment` |
 | `SANDBOX_WORKER_ID` | `app.worker_id` |
 | `SANDBOX_KAFKA_BROKERS` | `kafka.brokers` |
+| `SANDBOX_KAFKA_CLIENT_ID` | `kafka.client_id` |
+| `SANDBOX_KAFKA_GROUP_ID` | `kafka.group_id` |
+| `SANDBOX_KAFKA_TOPIC_REQUESTS` | `kafka.topics.requests` |
+| `SANDBOX_KAFKA_TOPIC_EVENTS` | `kafka.topics.events` |
+| `SANDBOX_KAFKA_TOPIC_RESULTS` | `kafka.topics.results` |
+| `SANDBOX_KAFKA_TOPIC_DEADLETTER` | `kafka.topics.deadletter` |
 | `SANDBOX_EXECUTOR_TYPE` | `executor.type` |
 | `SANDBOX_GOJUDGE_BASE_URL` | `executor.gojudge.base_url` |
 | `SANDBOX_MAX_IN_FLIGHT` | `scheduler.max_in_flight` |

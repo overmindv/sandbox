@@ -23,14 +23,14 @@ feature_flags:
 
 kafka:
   brokers:
-    - ${SANDBOX_KAFKA_BROKERS}
+    - ${SANDBOX_KAFKA_BROKERS:-kafka:9092}
   client_id: sandbox-worker-dev
-  group_id: sandbox-worker-dev
+  group_id: sandbox-code-execution-v1
   topics:
-    requests: sandbox.run.requests.v1
-    events: sandbox.run.events.v1
-    results: sandbox.run.results.v1
-    deadletter: sandbox.run.deadletter.v1
+    requests: code-execution.requests.v1
+    events: code-execution.events.v1
+    results: code-execution.results.v1
+    deadletter: code-execution.deadletter.v1
   consumer:
     auto_offset_reset: latest
     session_timeout_ms: 30000

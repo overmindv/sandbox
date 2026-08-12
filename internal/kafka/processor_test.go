@@ -12,7 +12,7 @@ func TestProcessorMalformedMessagePublishesDLQAndCommits(t *testing.T) {
 	consumer := &fakeConsumer{
 		messages: []Message{
 			{
-				Topic:     "sandbox.run.requests.v1",
+				Topic:     "code-execution.requests.v1",
 				Partition: 1,
 				Offset:    42,
 				Key:       []byte("raw-key"),
@@ -61,7 +61,7 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	consumer := &fakeConsumer{
 		messages: []Message{
 			{
-				Topic:     "sandbox.run.requests.v1",
+				Topic:     "code-execution.requests.v1",
 				Partition: 2,
 				Offset:    99,
 				Key:       []byte(req.AttemptID),
@@ -91,6 +91,9 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	if producer.messages[0].Topic != processor.Topics.Results {
 		t.Errorf("expected result topic, got %q", producer.messages[0].Topic)
 	}
+	if string(producer.messages[0].Key) != req.SubmissionID {
+		t.Errorf("expected result key %q, got %q", req.SubmissionID, string(producer.messages[0].Key))
+	}
 	if result.Status != contracts.StatusInvalidRequest {
 		t.Errorf("expected invalid_request status, got %q", result.Status)
 	}
@@ -104,6 +107,9 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	}
 	if producer.messages[1].Topic != processor.Topics.DeadLetter {
 		t.Errorf("expected deadletter topic, got %q", producer.messages[1].Topic)
+	}
+	if string(producer.messages[1].Key) != req.SubmissionID {
+		t.Errorf("expected deadletter key %q, got %q", req.SubmissionID, string(producer.messages[1].Key))
 	}
 	if deadLetter.Reason != "invalid_request" {
 		t.Errorf("expected invalid_request reason, got %q", deadLetter.Reason)
@@ -123,7 +129,7 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	consumer := &fakeConsumer{
 		messages: []Message{
 			{
-				Topic:     "sandbox.run.requests.v1",
+				Topic:     "code-execution.requests.v1",
 				Partition: 0,
 				Offset:    1,
 				Key:       []byte(req.AttemptID),
@@ -169,6 +175,9 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	if len(producer.messages) != 1 {
 		t.Errorf("expected one event message, got %d", len(producer.messages))
 	}
+	if string(producer.messages[0].Key) != req.SubmissionID {
+		t.Errorf("expected event key %q, got %q", req.SubmissionID, string(producer.messages[0].Key))
+	}
 
 	event, err := DecodeRunEvent(producer.messages[0].Value)
 	if err != nil {
@@ -191,10 +200,10 @@ func testProcessor(t *testing.T, consumer Consumer, producer Producer, handler R
 
 func testTopics() TopicNames {
 	return TopicNames{
-		Requests:   "sandbox.run.requests.v1",
-		Events:     "sandbox.run.events.v1",
-		Results:    "sandbox.run.results.v1",
-		DeadLetter: "sandbox.run.deadletter.v1",
+		Requests:   "code-execution.requests.v1",
+		Events:     "code-execution.events.v1",
+		Results:    "code-execution.results.v1",
+		DeadLetter: "code-execution.deadletter.v1",
 	}
 }
 

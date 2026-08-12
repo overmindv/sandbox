@@ -6,26 +6,26 @@ info:
 defaultContentType: application/json
 servers:
   local:
-    host: localhost:9092
+    host: localhost:29092
     protocol: kafka
 channels:
-  sandboxRunRequestsV1:
-    address: sandbox.run.requests.v1
+  codeExecutionRequestsV1:
+    address: code-execution.requests.v1
     messages:
       SandboxRunRequest:
         $ref: '#/components/messages/SandboxRunRequest'
-  sandboxRunEventsV1:
-    address: sandbox.run.events.v1
+  codeExecutionEventsV1:
+    address: code-execution.events.v1
     messages:
       SandboxRunEvent:
         $ref: '#/components/messages/SandboxRunEvent'
-  sandboxRunResultsV1:
-    address: sandbox.run.results.v1
+  codeExecutionResultsV1:
+    address: code-execution.results.v1
     messages:
       SandboxRunResult:
         $ref: '#/components/messages/SandboxRunResult'
-  sandboxRunDeadletterV1:
-    address: sandbox.run.deadletter.v1
+  codeExecutionDeadletterV1:
+    address: code-execution.deadletter.v1
     messages:
       SandboxRunDeadletter:
         $ref: '#/components/messages/SandboxRunDeadletter'
@@ -33,27 +33,27 @@ operations:
   consumeRunRequests:
     action: receive
     channel:
-      $ref: '#/channels/sandboxRunRequestsV1'
+      $ref: '#/channels/codeExecutionRequestsV1'
     messages:
-      - $ref: '#/channels/sandboxRunRequestsV1/messages/SandboxRunRequest'
+      - $ref: '#/channels/codeExecutionRequestsV1/messages/SandboxRunRequest'
   publishRunEvents:
     action: send
     channel:
-      $ref: '#/channels/sandboxRunEventsV1'
+      $ref: '#/channels/codeExecutionEventsV1'
     messages:
-      - $ref: '#/channels/sandboxRunEventsV1/messages/SandboxRunEvent'
+      - $ref: '#/channels/codeExecutionEventsV1/messages/SandboxRunEvent'
   publishRunResults:
     action: send
     channel:
-      $ref: '#/channels/sandboxRunResultsV1'
+      $ref: '#/channels/codeExecutionResultsV1'
     messages:
-      - $ref: '#/channels/sandboxRunResultsV1/messages/SandboxRunResult'
+      - $ref: '#/channels/codeExecutionResultsV1/messages/SandboxRunResult'
   publishRunDeadletter:
     action: send
     channel:
-      $ref: '#/channels/sandboxRunDeadletterV1'
+      $ref: '#/channels/codeExecutionDeadletterV1'
     messages:
-      - $ref: '#/channels/sandboxRunDeadletterV1/messages/SandboxRunDeadletter'
+      - $ref: '#/channels/codeExecutionDeadletterV1/messages/SandboxRunDeadletter'
 components:
   messages:
     SandboxRunRequest:
@@ -61,7 +61,7 @@ components:
       title: Sandbox run request v1
       contentType: application/json
       traits:
-        - $ref: '#/components/messageTraits/attemptKeyed'
+        - $ref: '#/components/messageTraits/solutionKeyed'
       payload:
         $ref: './schemas/sandbox.run.request.v1.json'
     SandboxRunEvent:
@@ -69,7 +69,7 @@ components:
       title: Sandbox run event v1
       contentType: application/json
       traits:
-        - $ref: '#/components/messageTraits/attemptKeyed'
+        - $ref: '#/components/messageTraits/solutionKeyed'
       payload:
         $ref: './schemas/sandbox.run.event.v1.json'
     SandboxRunResult:
@@ -77,17 +77,19 @@ components:
       title: Sandbox run result v1
       contentType: application/json
       traits:
-        - $ref: '#/components/messageTraits/attemptKeyed'
+        - $ref: '#/components/messageTraits/solutionKeyed'
       payload:
         $ref: './schemas/sandbox.run.result.v1.json'
     SandboxRunDeadletter:
       name: SandboxRunDeadletter
       title: Sandbox run dead-letter v1
       contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/solutionKeyed'
       payload:
         $ref: './schemas/sandbox.run.deadletter.v1.json'
   messageTraits:
-    attemptKeyed:
+    solutionKeyed:
       headers:
         type: object
         additionalProperties: false
@@ -102,4 +104,4 @@ components:
         kafka:
           key:
             type: string
-            description: attempt_id encoded as UTF-8.
+            description: submission_id encoded as UTF-8.

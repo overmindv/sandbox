@@ -89,7 +89,7 @@ func TestEventResultAndDeadLetterSerialization(t *testing.T) {
 		AttemptID:          event.AttemptID,
 		Reason:             "invalid_request",
 		Retryable:          false,
-		OriginalTopic:      "sandbox.run.requests.v1",
+		OriginalTopic:      "code-execution.requests.v1",
 		OriginalPartition:  1,
 		OriginalOffset:     42,
 		OriginalKey:        &key,

@@ -224,14 +224,14 @@ func Default() Config {
 			ObjectStorageTest: false,
 		},
 		Kafka: KafkaConfig{
-			Brokers:  []string{"localhost:9092"},
+			Brokers:  []string{"localhost:29092"},
 			ClientID: "sandbox-worker-local",
-			GroupID:  "sandbox-worker-local",
+			GroupID:  "sandbox-code-execution-v1",
 			Topics: KafkaTopics{
-				Requests:   "sandbox.run.requests.v1",
-				Events:     "sandbox.run.events.v1",
-				Results:    "sandbox.run.results.v1",
-				DeadLetter: "sandbox.run.deadletter.v1",
+				Requests:   "code-execution.requests.v1",
+				Events:     "code-execution.events.v1",
+				Results:    "code-execution.results.v1",
+				DeadLetter: "code-execution.deadletter.v1",
 			},
 		},
 		Scheduler: SchedulerConfig{

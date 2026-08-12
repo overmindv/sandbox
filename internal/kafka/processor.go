@@ -198,7 +198,7 @@ func (p *Processor) messageForDeadLetter(deadLetter contracts.RunDeadLetter) (Me
 
 	return Message{
 		Topic:   p.Topics.DeadLetter,
-		Key:     messageKey(deadLetter.AttemptID, deadLetter.OriginalKey),
+		Key:     messageKey(deadLetter.SubmissionID, deadLetter.AttemptID, deadLetter.OriginalKey),
 		Value:   value,
 		Headers: resultHeaders(deadLetter.SchemaVersion, deadLetter.TraceID, p.WorkerID),
 		Time:    p.now(),
@@ -213,7 +213,7 @@ func MessageForEvent(topic string, event contracts.RunEvent, workerID string) (M
 
 	return Message{
 		Topic:   topic,
-		Key:     messageKey(event.AttemptID, nil),
+		Key:     messageKey(event.SubmissionID, event.AttemptID, nil),
 		Value:   value,
 		Headers: resultHeaders(event.SchemaVersion, event.TraceID, workerID),
 		Time:    event.CreatedAt,
@@ -228,14 +228,17 @@ func MessageForResult(topic string, result contracts.RunResult, workerID string)
 
 	return Message{
 		Topic:   topic,
-		Key:     messageKey(result.AttemptID, nil),
+		Key:     messageKey(result.SubmissionID, result.AttemptID, nil),
 		Value:   value,
 		Headers: resultHeaders(result.SchemaVersion, result.TraceID, workerID),
 		Time:    result.CreatedAt,
 	}, nil
 }
 
-func messageKey(attemptID string, fallback *string) []byte {
+func messageKey(submissionID string, attemptID string, fallback *string) []byte {
+	if submissionID != "" {
+		return []byte(submissionID)
+	}
 	if attemptID != "" {
 		return []byte(attemptID)
 	}
