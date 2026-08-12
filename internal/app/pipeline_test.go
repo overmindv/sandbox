@@ -30,6 +30,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	payload, err := kafka.EncodeRunRequest(req)
 	if err != nil {
 		t.Errorf("encode request: %v", err)
+		return
 	}
 
 	consumer := &pipelineConsumer{
@@ -54,12 +55,14 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("new worker with deps: %v", err)
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := worker.Start(ctx); err != nil {
 		t.Errorf("start worker: %v", err)
+		return
 	}
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -69,6 +72,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 
 	if err := worker.ProcessOnce(ctx); err != nil {
 		t.Errorf("process once: %v", err)
+		return
 	}
 
 	if len(consumer.committed) != 1 {
@@ -76,6 +80,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 	if len(producer.messages) != 1 {
 		t.Errorf("expected one result message, got %d", len(producer.messages))
+		return
 	}
 
 	resultMessage := producer.messages[0]
@@ -89,6 +94,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	result, err := kafka.DecodeRunResult(resultMessage.Value)
 	if err != nil {
 		t.Errorf("decode result: %v", err)
+		return
 	}
 	if result.Status != contracts.StatusFailed {
 		t.Errorf("expected failed result, got %q", result.Status)
@@ -101,6 +107,83 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 	if result.WorkerID != cfg.App.WorkerID {
 		t.Errorf("expected worker id %q, got %q", cfg.App.WorkerID, result.WorkerID)
+	}
+}
+
+func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Executor.Type = "fake"
+	cfg.Executor.Fake.LatencyMS = 0
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+	req := validPipelineRunRequest()
+	req.Language = contracts.LanguageSpec{ID: "javascript", Version: "22"}
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    1,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+
+	var logs bytes.Buffer
+	logger := observability.NewLogger("debug", "json", &logs)
+	worker, err := app.NewWorkerWithDeps(cfg, logger, app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one result message, got %d", len(producer.messages))
+		return
+	}
+
+	result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusUnsupportedLanguage {
+		t.Errorf("expected unsupported_language result, got %q", result.Status)
+	}
+	if result.Error == nil || result.Error.Code != "unsupported_language" {
+		t.Errorf("expected unsupported_language error code, got %#v", result.Error)
 	}
 }
 

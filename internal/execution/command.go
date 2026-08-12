@@ -16,20 +16,27 @@ const (
 )
 
 type ExecutionCommand struct {
-	ID           string
-	SubmissionID string
-	AttemptID    string
-	UserID       string
-	TaskID       string
-	Language     contracts.LanguageSpec
-	Entrypoint   string
-	TestMode     contracts.TestMode
-	TestSource   contracts.TestSource
-	Files        []ExecutionFile
-	Limits       contracts.Limits
-	Metadata     map[string]any
-	TraceID      string
-	CreatedAt    time.Time
+	ID             string
+	SubmissionID   string
+	AttemptID      string
+	UserID         string
+	TaskID         string
+	Language       contracts.LanguageSpec
+	Adapter        string
+	RuntimeImage   string
+	WorkingDir     string
+	Argv           []string
+	CompileArgv    []string
+	Environment    map[string]string
+	Entrypoint     string
+	TestEntrypoint string
+	TestMode       contracts.TestMode
+	TestSource     contracts.TestSource
+	Files          []ExecutionFile
+	Limits         contracts.Limits
+	Metadata       map[string]any
+	TraceID        string
+	CreatedAt      time.Time
 }
 
 type ExecutionFile struct {
@@ -64,20 +71,21 @@ func CommandFromRunRequest(req contracts.RunRequest) (ExecutionCommand, error) {
 	}
 
 	return ExecutionCommand{
-		ID:           req.AttemptID,
-		SubmissionID: req.SubmissionID,
-		AttemptID:    req.AttemptID,
-		UserID:       req.UserID,
-		TaskID:       req.TaskID,
-		Language:     req.Language,
-		Entrypoint:   req.Code.Entrypoint,
-		TestMode:     req.Tests.Mode,
-		TestSource:   req.Tests.Source,
-		Files:        files,
-		Limits:       req.Limits,
-		Metadata:     req.Metadata,
-		TraceID:      req.TraceID,
-		CreatedAt:    req.CreatedAt,
+		ID:             req.AttemptID,
+		SubmissionID:   req.SubmissionID,
+		AttemptID:      req.AttemptID,
+		UserID:         req.UserID,
+		TaskID:         req.TaskID,
+		Language:       req.Language,
+		Entrypoint:     req.Code.Entrypoint,
+		TestEntrypoint: req.Tests.Entrypoint,
+		TestMode:       req.Tests.Mode,
+		TestSource:     req.Tests.Source,
+		Files:          files,
+		Limits:         req.Limits,
+		Metadata:       req.Metadata,
+		TraceID:        req.TraceID,
+		CreatedAt:      req.CreatedAt,
 	}, nil
 }
 

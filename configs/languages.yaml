@@ -75,9 +75,9 @@ languages:
     enabled: false
     adapter: go
     versions:
-      - version: "1.23"
+      - version: "1.26"
         default: true
-        runtime_image: overmindv/sandbox-go:1.23
+        runtime_image: overmindv/sandbox-go:1.26
         limits_profile: compiled-default
         test_modes:
           - go-test

@@ -11,15 +11,18 @@ import (
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/execution/fake"
 	"overmindv/sandbox/internal/kafka"
+	"overmindv/sandbox/internal/languages"
+	pythonadapter "overmindv/sandbox/internal/languages/python"
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/scheduler"
 )
 
 type WorkerDeps struct {
-	Consumer kafka.Consumer
-	Producer kafka.Producer
-	Executor execution.Executor
-	Metrics  *observability.SchedulerMetrics
+	Consumer  kafka.Consumer
+	Producer  kafka.Producer
+	Executor  execution.Executor
+	Languages *languages.Registry
+	Metrics   *observability.SchedulerMetrics
 }
 
 type requestExecutor struct {
@@ -38,6 +41,7 @@ type requestPipeline struct {
 	dispatcher *scheduler.Dispatcher
 	producer   kafka.Producer
 	topics     kafka.TopicNames
+	languages  *languages.Registry
 	workerID   string
 }
 
@@ -62,6 +66,17 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 			return nil, nil, err
 		}
 	}
+	languageRegistry := deps.Languages
+	if languageRegistry == nil {
+		manifest, err := languages.LoadManifest(cfg.Config.LanguagesFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		languageRegistry, err = languages.NewRegistry(manifest, pythonadapter.NewAdapter())
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor}, deps.Metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
 	if err != nil {
@@ -73,6 +88,7 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		dispatcher: dispatcher,
 		producer:   deps.Producer,
 		topics:     topics,
+		languages:  languageRegistry,
 		workerID:   cfg.App.WorkerID,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
@@ -93,12 +109,19 @@ func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
 }
 
 func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Message, req contracts.RunRequest) error {
-	command, err := execution.CommandFromRunRequest(req)
+	command, err := p.languages.BuildCommand(ctx, req)
 	if err != nil {
+		status := contracts.StatusInvalidRequest
+		code := "invalid_request"
+		if errors.Is(err, languages.ErrUnsupportedLanguage) {
+			status = contracts.StatusUnsupportedLanguage
+			code = "unsupported_language"
+		}
+
 		result := execution.RunResultFromExecution(req, execution.InternalErrorResult(err.Error(), false), execution.ResultTimingInput{}, p.workerID)
-		result.Status = contracts.StatusInvalidRequest
+		result.Status = status
 		if result.Error != nil {
-			result.Error.Code = "invalid_request"
+			result.Error.Code = code
 		}
 		return p.publishResult(ctx, result)
 	}
