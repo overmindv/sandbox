@@ -95,8 +95,16 @@ type KafkaProducerConfig struct {
 
 type SchedulerConfig struct {
 	MaxInFlight            int                    `yaml:"max_in_flight"`
+	JobTimeoutMS           int                    `yaml:"job_timeout_ms"`
 	MaxInFlightPerLanguage map[string]int         `yaml:"max_in_flight_per_language"`
+	Queue                  SchedulerQueueConfig   `yaml:"queue"`
 	Admission              SchedulerAdmissionConf `yaml:"admission"`
+}
+
+type SchedulerQueueConfig struct {
+	Policy           string `yaml:"policy"`
+	MaxDepth         int    `yaml:"max_depth"`
+	EnqueueTimeoutMS int    `yaml:"enqueue_timeout_ms"`
 }
 
 type SchedulerAdmissionConf struct {
@@ -227,8 +235,18 @@ func Default() Config {
 			},
 		},
 		Scheduler: SchedulerConfig{
+			JobTimeoutMS:           10000,
 			MaxInFlight:            4,
 			MaxInFlightPerLanguage: map[string]int{"python": 4},
+			Queue: SchedulerQueueConfig{
+				Policy:           "bounded_fifo",
+				MaxDepth:         16,
+				EnqueueTimeoutMS: 100,
+			},
+			Admission: SchedulerAdmissionConf{
+				RejectWhenExecutorUnhealthy: true,
+				MaxQueueAgeMS:               300000,
+			},
 		},
 		Executor: ExecutorConfig{
 			Type:            "fake",
@@ -386,6 +404,12 @@ func applyEnvOverrides(cfg *Config) error {
 	if err := applyMapIntEnv("SANDBOX_PYTHON_MAX_IN_FLIGHT", cfg.Scheduler.MaxInFlightPerLanguage, "python"); err != nil {
 		return err
 	}
+	if err := applyIntEnv("SANDBOX_SCHEDULER_JOB_TIMEOUT_MS", &cfg.Scheduler.JobTimeoutMS); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_SCHEDULER_QUEUE_MAX_DEPTH", &cfg.Scheduler.Queue.MaxDepth); err != nil {
+		return err
+	}
 	if value := os.Getenv("SANDBOX_TESTS_PROVIDER"); value != "" {
 		cfg.Tests.ObjectStorage.Provider = value
 	}
@@ -462,6 +486,21 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Scheduler.MaxInFlight <= 0 {
 		errs = append(errs, "scheduler.max_in_flight must be positive")
+	}
+	if cfg.Scheduler.JobTimeoutMS <= 0 {
+		errs = append(errs, "scheduler.job_timeout_ms must be positive")
+	}
+	if cfg.Scheduler.Queue.Policy != "bounded_fifo" {
+		errs = append(errs, "scheduler.queue.policy must be bounded_fifo")
+	}
+	if cfg.Scheduler.Queue.MaxDepth <= 0 {
+		errs = append(errs, "scheduler.queue.max_depth must be positive")
+	}
+	if cfg.Scheduler.Queue.EnqueueTimeoutMS < 0 {
+		errs = append(errs, "scheduler.queue.enqueue_timeout_ms must not be negative")
+	}
+	if cfg.Scheduler.Admission.MaxQueueAgeMS <= 0 {
+		errs = append(errs, "scheduler.admission.max_queue_age_ms must be positive")
 	}
 	if cfg.Executor.ClientTimeoutMS <= 0 {
 		errs = append(errs, "executor.client_timeout_ms must be positive")

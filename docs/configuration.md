@@ -47,6 +47,10 @@ Initial environment variables:
 | `SANDBOX_KAFKA_BROKERS` | `kafka.brokers` |
 | `SANDBOX_EXECUTOR_TYPE` | `executor.type` |
 | `SANDBOX_GOJUDGE_BASE_URL` | `executor.gojudge.base_url` |
+| `SANDBOX_MAX_IN_FLIGHT` | `scheduler.max_in_flight` |
+| `SANDBOX_PYTHON_MAX_IN_FLIGHT` | `scheduler.max_in_flight_per_language.python` |
+| `SANDBOX_SCHEDULER_JOB_TIMEOUT_MS` | `scheduler.job_timeout_ms` |
+| `SANDBOX_SCHEDULER_QUEUE_MAX_DEPTH` | `scheduler.queue.max_depth` |
 | `SANDBOX_POSTGRES_DSN` | `storage.postgres.dsn` |
 | `SANDBOX_TESTS_BUCKET` | `tests.object_storage.bucket` |
 | `SANDBOX_TESTS_ENDPOINT` | `tests.object_storage.endpoint` |

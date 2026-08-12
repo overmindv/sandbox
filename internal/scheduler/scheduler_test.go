@@ -1,0 +1,300 @@
+package scheduler
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"overmindv/sandbox/internal/config"
+	"overmindv/sandbox/internal/observability"
+)
+
+func TestSlotPoolEnforcesGlobalAndLanguageLimits(t *testing.T) {
+	pool, err := NewSlotPool(2, map[string]int{"python": 1})
+	if err != nil {
+		t.Fatalf("new slot pool: %v", err)
+	}
+
+	pythonSlot, ok := pool.TryAcquire("python")
+	if !ok {
+		t.Fatal("expected first python slot")
+	}
+	if _, ok := pool.TryAcquire("python"); ok {
+		t.Fatal("expected second python slot to be rejected by per-language limit")
+	}
+
+	goSlot, ok := pool.TryAcquire("go")
+	if !ok {
+		t.Fatal("expected go slot")
+	}
+	if _, ok := pool.TryAcquire("javascript"); ok {
+		t.Fatal("expected global limit to reject third slot")
+	}
+
+	pythonSlot.Release()
+	if _, ok := pool.TryAcquire("python"); !ok {
+		t.Fatal("expected python slot after release")
+	}
+	goSlot.Release()
+}
+
+func TestAdmissionRejectsUnhealthyExecutorAndOldJobs(t *testing.T) {
+	now := fixedSchedulerTime()
+	admission := AdmissionController{
+		RejectWhenExecutorUnhealthy: true,
+		MaxQueueAge:                 time.Minute,
+		ExecutorHealth:              ExecutorHealthFunc(func() bool { return false }),
+		Now:                         func() time.Time { return now },
+	}
+
+	job := validSchedulerJob(now)
+	if err := admission.Check(job); !errors.Is(err, ErrExecutorUnhealthy) {
+		t.Fatalf("expected executor unhealthy, got %v", err)
+	}
+
+	admission.ExecutorHealth = ExecutorHealthFunc(func() bool { return true })
+	job.CreatedAt = now.Add(-2 * time.Minute)
+	if err := admission.Check(job); !errors.Is(err, ErrJobTooOld) {
+		t.Fatalf("expected job too old, got %v", err)
+	}
+}
+
+func TestDispatcherProcessesJobsAndTracksMetrics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var handled atomic.Int64
+	dispatcher := newTestDispatcher(t, schedulerTestConfig(), JobHandlerFunc(func(ctx context.Context, job Job) error {
+		handled.Add(1)
+		return nil
+	}))
+	startDispatcher(t, ctx, dispatcher)
+
+	result, err := dispatcher.DispatchAndWait(ctx, validSchedulerJob(fixedSchedulerTime()))
+	if err != nil {
+		t.Fatalf("dispatch and wait: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %q", result.Status)
+	}
+	if handled.Load() != 1 {
+		t.Fatalf("expected handler once, got %d", handled.Load())
+	}
+
+	metrics := dispatcher.Metrics()
+	if metrics.Submitted["python"] != 1 {
+		t.Fatalf("expected submitted python=1, got %#v", metrics.Submitted)
+	}
+	if metrics.Started["python"] != 1 {
+		t.Fatalf("expected started python=1, got %#v", metrics.Started)
+	}
+	if metrics.Completed["completed"] != 1 {
+		t.Fatalf("expected completed=1, got %#v", metrics.Completed)
+	}
+	if metrics.QueueDepth != 0 {
+		t.Fatalf("expected empty queue, got %d", metrics.QueueDepth)
+	}
+}
+
+func TestDispatcherEnforcesQueueFullPolicy(t *testing.T) {
+	cfg := schedulerTestConfig()
+	cfg.MaxInFlight = 1
+	cfg.MaxInFlightPerLanguage = map[string]int{"python": 1}
+	cfg.Queue.MaxDepth = 1
+	cfg.Queue.EnqueueTimeoutMS = 0
+
+	started := make(chan struct{}, 1)
+	block := make(chan struct{})
+	dispatcher := newTestDispatcher(t, cfg, JobHandlerFunc(func(ctx context.Context, job Job) error {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-block
+		return nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDispatcher(t, ctx, dispatcher)
+
+	if _, err := dispatcher.Submit(ctx, Job{ID: "job-1", AttemptID: "attempt-1", LanguageID: "python", CreatedAt: fixedSchedulerTime()}); err != nil {
+		t.Fatalf("submit job-1: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected job-1 to start")
+	}
+	if _, err := dispatcher.Submit(ctx, Job{ID: "job-2", AttemptID: "attempt-2", LanguageID: "python", CreatedAt: fixedSchedulerTime()}); err != nil {
+		t.Fatalf("submit job-2: %v", err)
+	}
+	if _, err := dispatcher.Submit(ctx, Job{ID: "job-3", AttemptID: "attempt-3", LanguageID: "python", CreatedAt: fixedSchedulerTime()}); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("expected queue full, got %v", err)
+	}
+
+	close(block)
+}
+
+func TestDispatcherAppliesJobTimeout(t *testing.T) {
+	cfg := schedulerTestConfig()
+	cfg.JobTimeoutMS = 20
+
+	dispatcher := newTestDispatcher(t, cfg, JobHandlerFunc(func(ctx context.Context, job Job) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDispatcher(t, ctx, dispatcher)
+
+	result, err := dispatcher.DispatchAndWait(ctx, validSchedulerJob(fixedSchedulerTime()))
+	if !errors.Is(err, ErrJobTimeout) {
+		t.Fatalf("expected job timeout, got result=%#v err=%v", result, err)
+	}
+	if result.Status != "timeout" {
+		t.Fatalf("expected timeout status, got %q", result.Status)
+	}
+
+	metrics := dispatcher.Metrics()
+	if metrics.TimedOut["python"] != 1 {
+		t.Fatalf("expected timed out python=1, got %#v", metrics.TimedOut)
+	}
+}
+
+func TestDispatcherTimeoutReturnsWhenHandlerIgnoresContext(t *testing.T) {
+	cfg := schedulerTestConfig()
+	cfg.JobTimeoutMS = 20
+
+	release := make(chan struct{})
+	dispatcher := newTestDispatcher(t, cfg, JobHandlerFunc(func(ctx context.Context, job Job) error {
+		<-release
+		return nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDispatcher(t, ctx, dispatcher)
+
+	start := time.Now()
+	result, err := dispatcher.DispatchAndWait(ctx, validSchedulerJob(fixedSchedulerTime()))
+	if !errors.Is(err, ErrJobTimeout) {
+		close(release)
+		t.Fatalf("expected job timeout, got result=%#v err=%v", result, err)
+	}
+	close(release)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("expected timeout result quickly, took %s", elapsed)
+	}
+}
+
+func TestDispatcherRespectsPerLanguageConcurrency(t *testing.T) {
+	cfg := schedulerTestConfig()
+	cfg.MaxInFlight = 2
+	cfg.MaxInFlightPerLanguage = map[string]int{"python": 1}
+	cfg.Queue.MaxDepth = 4
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	dispatcher := newTestDispatcher(t, cfg, JobHandlerFunc(func(ctx context.Context, job Job) error {
+		started <- job.ID
+		<-release
+		return nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDispatcher(t, ctx, dispatcher)
+
+	first, err := dispatcher.Submit(ctx, Job{ID: "job-1", AttemptID: "attempt-1", LanguageID: "python", CreatedAt: fixedSchedulerTime()})
+	if err != nil {
+		t.Fatalf("submit first: %v", err)
+	}
+	second, err := dispatcher.Submit(ctx, Job{ID: "job-2", AttemptID: "attempt-2", LanguageID: "python", CreatedAt: fixedSchedulerTime()})
+	if err != nil {
+		t.Fatalf("submit second: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected first job to start")
+	}
+	select {
+	case jobID := <-started:
+		t.Fatalf("expected second python job to wait, but %s started", jobID)
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	close(release)
+	waitReceipt(t, first)
+	waitReceipt(t, second)
+}
+
+func newTestDispatcher(t *testing.T, cfg config.SchedulerConfig, handler JobHandler) *Dispatcher {
+	t.Helper()
+	metrics := observability.NewSchedulerMetrics()
+	logger := observability.NewLogger("error", "json", nil)
+	dispatcher, err := NewDispatcher(cfg, handler, metrics, logger, ExecutorHealthFunc(func() bool { return true }))
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+	dispatcher.now = fixedSchedulerTime
+	dispatcher.admission.Now = fixedSchedulerTime
+	return dispatcher
+}
+
+func startDispatcher(t *testing.T, ctx context.Context, dispatcher *Dispatcher) {
+	t.Helper()
+	if err := dispatcher.Start(ctx); err != nil {
+		t.Fatalf("start dispatcher: %v", err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = dispatcher.Stop(shutdownCtx)
+	})
+}
+
+func waitReceipt(t *testing.T, receipt JobReceipt) JobResult {
+	t.Helper()
+	select {
+	case result := <-receipt.Result:
+		if result.Error != nil {
+			t.Fatalf("job %s failed: %v", result.JobID, result.Error)
+		}
+		return result
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for job %s", receipt.JobID)
+		return JobResult{}
+	}
+}
+
+func schedulerTestConfig() config.SchedulerConfig {
+	return config.SchedulerConfig{
+		MaxInFlight:            2,
+		JobTimeoutMS:           1000,
+		MaxInFlightPerLanguage: map[string]int{"python": 2},
+		Queue: config.SchedulerQueueConfig{
+			Policy:           "bounded_fifo",
+			MaxDepth:         8,
+			EnqueueTimeoutMS: 10,
+		},
+		Admission: config.SchedulerAdmissionConf{
+			RejectWhenExecutorUnhealthy: true,
+			MaxQueueAgeMS:               60000,
+		},
+	}
+}
+
+func validSchedulerJob(createdAt time.Time) Job {
+	return Job{
+		ID:         "job-1",
+		AttemptID:  "attempt-1",
+		LanguageID: "python",
+		CreatedAt:  createdAt,
+	}
+}
+
+func fixedSchedulerTime() time.Time {
+	return time.Date(2026, 8, 12, 19, 0, 0, 0, time.UTC)
+}

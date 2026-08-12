@@ -46,11 +46,16 @@ kafka:
 
 scheduler:
   max_in_flight: 16
+  job_timeout_ms: 30000
   max_in_flight_per_language:
     python: 16
     javascript: 4
     go: 4
     cpp: 2
+  queue:
+    policy: bounded_fifo
+    max_depth: 256
+    enqueue_timeout_ms: 250
   admission:
     reject_when_executor_unhealthy: true
     max_queue_age_ms: 600000
