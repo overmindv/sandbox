@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/security"
 )
 
 func TestProcessorMalformedMessagePublishesDLQAndCommits(t *testing.T) {
@@ -185,6 +186,98 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	}
 	if event.EventType != contracts.EventAccepted {
 		t.Errorf("expected accepted event, got %q", event.EventType)
+	}
+}
+
+func TestProcessorOversizedPayloadPublishesDLQBeforeDecode(t *testing.T) {
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.requests.v1",
+				Partition: 0,
+				Offset:    2,
+				Key:       []byte("raw-key"),
+				Value:     []byte(`{"schema_version":"sandbox.run.request.v1"}`),
+				Headers:   map[string]string{HeaderTraceID: "trace-header"},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	handled := false
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		handled = true
+		return nil
+	}))
+	policy := security.DefaultPolicy()
+	policy.MaxPayloadBytes = 8
+	processor.SecurityGuard = security.NewGuard(policy)
+
+	if err := processor.ProcessOnce(context.Background()); err != nil {
+		t.Errorf("process once: %v", err)
+	}
+	if handled {
+		t.Error("expected oversized payload not to reach handler")
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one DLQ message, got %d", len(producer.messages))
+		return
+	}
+	deadLetter, err := DecodeRunDeadLetter(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode dead letter: %v", err)
+		return
+	}
+	if deadLetter.Reason != "payload_rejected" {
+		t.Errorf("expected payload_rejected, got %q", deadLetter.Reason)
+	}
+}
+
+func TestProcessorSecurityRejectsArchiveBeforeHandler(t *testing.T) {
+	req := validKafkaRunRequest()
+	req.Code.Files[0].Path = "solution.zip"
+	req.Code.Files[0].ContentB64 = encodeKafkaFixture("PK\x03\x04archive")
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.requests.v1",
+				Partition: 0,
+				Offset:    3,
+				Key:       []byte(req.SubmissionID),
+				Value:     payload,
+				Headers:   map[string]string{HeaderTraceID: "trace-header"},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	handled := false
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		handled = true
+		return nil
+	}))
+
+	if err := processor.ProcessOnce(context.Background()); err != nil {
+		t.Errorf("process once: %v", err)
+	}
+	if handled {
+		t.Error("expected archive payload not to reach handler")
+	}
+	if len(producer.messages) != 2 {
+		t.Errorf("expected result and DLQ messages, got %d", len(producer.messages))
+		return
+	}
+	result, err := DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusInvalidRequest {
+		t.Errorf("expected invalid_request, got %q", result.Status)
 	}
 }
 

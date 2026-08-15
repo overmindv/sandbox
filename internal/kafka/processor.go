@@ -9,6 +9,7 @@ import (
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/observability"
+	"overmindv/sandbox/internal/security"
 )
 
 type RunRequestHandler interface {
@@ -25,6 +26,11 @@ type CommitPolicy struct {
 	CommitAfterResultPublish bool
 }
 
+type RequestSecurityGuard interface {
+	ValidatePayload(payload []byte) error
+	ValidateRunRequest(req contracts.RunRequest) error
+}
+
 type Processor struct {
 	Consumer          Consumer
 	Producer          Producer
@@ -32,6 +38,7 @@ type Processor struct {
 	WorkerID          string
 	CommitPolicy      CommitPolicy
 	ValidationOptions contracts.ValidationOptions
+	SecurityGuard     RequestSecurityGuard
 	Handler           RunRequestHandler
 	Now               func() time.Time
 	Logger            *observability.Logger
@@ -60,6 +67,7 @@ func NewProcessor(consumer Consumer, producer Producer, topics TopicNames, worke
 			CommitAfterResultPublish: true,
 		},
 		ValidationOptions: contracts.DefaultValidationOptions(),
+		SecurityGuard:     security.NewGuard(security.DefaultPolicy()),
 		Handler:           handler,
 		Now:               func() time.Time { return time.Now().UTC() },
 		Logger:            logger,
@@ -102,6 +110,13 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	traceID := msg.Headers[HeaderTraceID]
 	ctx = observability.WithTraceID(ctx, traceID)
 
+	if p.SecurityGuard != nil {
+		if err := p.SecurityGuard.ValidatePayload(msg.Value); err != nil {
+			p.Logger.Warn(ctx, "kafka payload rejected by security guard", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			return p.publishDeadLetter(ctx, msg, "payload_rejected", err, false, contracts.RunRequest{})
+		}
+	}
+
 	req, err := DecodeRunRequest(msg.Value)
 	if err != nil {
 		if !json.Valid(msg.Value) {
@@ -125,6 +140,12 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	if err := contracts.ValidateRunRequestWithOptions(req, p.ValidationOptions); err != nil {
 		p.Logger.Warn(ctx, "invalid run request", "attempt_id", req.AttemptID, "error", err)
 		return p.publishInvalidRequest(ctx, msg, req, err)
+	}
+	if p.SecurityGuard != nil {
+		if err := p.SecurityGuard.ValidateRunRequest(req); err != nil {
+			p.Logger.Warn(ctx, "run request rejected by security guard", "attempt_id", req.AttemptID, "error", err)
+			return p.publishInvalidRequest(ctx, msg, req, err)
+		}
 	}
 
 	if p.Handler == nil {

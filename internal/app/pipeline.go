@@ -15,6 +15,7 @@ import (
 	pythonadapter "overmindv/sandbox/internal/languages/python"
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/scheduler"
+	"overmindv/sandbox/internal/security"
 )
 
 type WorkerDeps struct {
@@ -43,6 +44,7 @@ type requestPipeline struct {
 	topics     kafka.TopicNames
 	languages  *languages.Registry
 	workerID   string
+	security   security.Policy
 }
 
 func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, error) {
@@ -83,18 +85,27 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		return nil, nil, fmt.Errorf("create scheduler dispatcher: %w", err)
 	}
 
+	limitsConfig, err := config.LoadLimits(cfg.Config.LimitsFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load limits config: %w", err)
+	}
+
 	topics := kafka.TopicNamesFromConfig(cfg.Kafka.Topics)
+	securityPolicy := security.PolicyFromConfigAndLimits(cfg, limitsConfig)
 	handler := requestPipeline{
 		dispatcher: dispatcher,
 		producer:   deps.Producer,
 		topics:     topics,
 		languages:  languageRegistry,
 		workerID:   cfg.App.WorkerID,
+		security:   securityPolicy,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create kafka processor: %w", err)
 	}
+	processor.SecurityGuard = security.NewGuard(securityPolicy)
+	processor.ValidationOptions = security.ValidationOptionsFromLimits(limitsConfig)
 
 	return processor, dispatcher, nil
 }
@@ -146,6 +157,7 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 	} else {
 		execResult = execution.InternalErrorResult("scheduler returned unexpected execution output", true)
 	}
+	execResult = applyOutputPolicy(execResult, p.security)
 
 	result := execution.RunResultFromExecution(req, execResult, execution.ResultTimingInput{
 		QueueTime: jobResult.QueueTime,
@@ -160,4 +172,12 @@ func (p requestPipeline) publishResult(ctx context.Context, result contracts.Run
 		return err
 	}
 	return p.producer.WriteMessages(ctx, msg)
+}
+
+func applyOutputPolicy(result execution.ExecutionResult, policy security.Policy) execution.ExecutionResult {
+	stdout, stderr, truncated := security.TruncateOutput(result.Stdout, result.Stderr, policy)
+	result.Stdout = stdout
+	result.Stderr = stderr
+	result.LogsTruncated = result.LogsTruncated || truncated
+	return result
 }

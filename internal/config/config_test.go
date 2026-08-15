@@ -47,6 +47,24 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadLimitsConfig(t *testing.T) {
+	limits, err := LoadLimits(filepath.Join("..", "..", "configs", "limits.yaml"))
+	if err != nil {
+		t.Errorf("load limits config: %v", err)
+		return
+	}
+
+	if limits.SchemaVersion != LimitsSchemaVersion {
+		t.Errorf("expected limits schema %q, got %q", LimitsSchemaVersion, limits.SchemaVersion)
+	}
+	if limits.Global.RequestMaxBytes != 2097152 {
+		t.Errorf("expected request max bytes from config, got %d", limits.Global.RequestMaxBytes)
+	}
+	if limits.HardMax.MemoryMB != 1024 {
+		t.Errorf("expected hard max memory from config, got %d", limits.HardMax.MemoryMB)
+	}
+}
+
 func clearSandboxEnv(t *testing.T) {
 	t.Helper()
 	original := make(map[string]string)
