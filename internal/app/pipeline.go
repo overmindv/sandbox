@@ -17,6 +17,7 @@ import (
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/scheduler"
 	"overmindv/sandbox/internal/security"
+	"overmindv/sandbox/internal/storage"
 )
 
 type WorkerDeps struct {
@@ -25,6 +26,7 @@ type WorkerDeps struct {
 	Executor  execution.Executor
 	Languages *languages.Registry
 	Metrics   *observability.SchedulerMetrics
+	RunStore  storage.RunStore
 }
 
 type requestExecutor struct {
@@ -46,19 +48,21 @@ type requestPipeline struct {
 	languages  *languages.Registry
 	workerID   string
 	security   security.Policy
+	store      storage.RunStore
+	logger     *observability.Logger
 }
 
-func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, error) {
+func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, storage.RunStore, error) {
 	hasKafkaDeps := deps.Consumer != nil || deps.Producer != nil
 	if !hasKafkaDeps {
 		consumer, err := kafka.NewConsumer(cfg.Kafka)
 		if err != nil {
-			return nil, nil, fmt.Errorf("create kafka consumer: %w", err)
+			return nil, nil, nil, fmt.Errorf("create kafka consumer: %w", err)
 		}
 		deps.Consumer = consumer
 		deps.Producer = kafka.NewProducer(cfg.Kafka)
 	} else if deps.Consumer == nil || deps.Producer == nil {
-		return nil, nil, errors.New("both kafka consumer and producer are required when pipeline is enabled")
+		return nil, nil, nil, errors.New("both kafka consumer and producer are required when pipeline is enabled")
 	}
 
 	executor := deps.Executor
@@ -66,29 +70,37 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		var err error
 		executor, err = executorFromConfig(cfg.Executor)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	languageRegistry := deps.Languages
 	if languageRegistry == nil {
 		manifest, err := languages.LoadManifest(cfg.Config.LanguagesFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		languageRegistry, err = languages.NewRegistry(manifest, pythonadapter.NewAdapter())
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
 	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor}, deps.Metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
 	if err != nil {
-		return nil, nil, fmt.Errorf("create scheduler dispatcher: %w", err)
+		return nil, nil, nil, fmt.Errorf("create scheduler dispatcher: %w", err)
 	}
 
 	limitsConfig, err := config.LoadLimits(cfg.Config.LimitsFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load limits config: %w", err)
+		return nil, nil, nil, fmt.Errorf("load limits config: %w", err)
+	}
+
+	runStore := deps.RunStore
+	if runStore == nil {
+		runStore, err = storage.NewRunStore(context.Background(), cfg.Storage)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("create run store: %w", err)
+		}
 	}
 
 	topics := kafka.TopicNamesFromConfig(cfg.Kafka.Topics)
@@ -100,15 +112,17 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		languages:  languageRegistry,
 		workerID:   cfg.App.WorkerID,
 		security:   securityPolicy,
+		store:      runStore,
+		logger:     logger,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create kafka processor: %w", err)
+		return nil, nil, nil, fmt.Errorf("create kafka processor: %w", err)
 	}
 	processor.SecurityGuard = security.NewGuard(securityPolicy)
 	processor.ValidationOptions = security.ValidationOptionsFromLimits(limitsConfig)
 
-	return processor, dispatcher, nil
+	return processor, dispatcher, runStore, nil
 }
 
 func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
@@ -127,6 +141,22 @@ func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
 }
 
 func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Message, req contracts.RunRequest) error {
+	reservation, err := p.store.ReserveAttempt(ctx, req, p.workerID)
+	if err != nil {
+		return err
+	}
+	switch reservation.State {
+	case storage.AttemptDuplicateCompleted:
+		p.logger.Info(ctx, "duplicate attempt result found, republishing known result", "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
+		return p.publishResult(ctx, reservation.Result)
+	case storage.AttemptDuplicateRunning:
+		p.logger.Warn(ctx, "duplicate attempt is already running", "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
+		return storage.ErrAttemptInProgress
+	case storage.AttemptReserved:
+	default:
+		return fmt.Errorf("unknown attempt reservation state %q", reservation.State)
+	}
+
 	command, err := p.languages.BuildCommand(ctx, req)
 	if err != nil {
 		status := contracts.StatusInvalidRequest
@@ -141,7 +171,7 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		if result.Error != nil {
 			result.Error.Code = code
 		}
-		return p.publishResult(ctx, result)
+		return p.completeAndPublish(ctx, result)
 	}
 
 	timeout := time.Duration(req.Limits.Wallms) * time.Millisecond
@@ -170,6 +200,13 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		QueueTime: jobResult.QueueTime,
 		RunTime:   jobResult.RunTime,
 	}, p.workerID)
+	return p.completeAndPublish(ctx, result)
+}
+
+func (p requestPipeline) completeAndPublish(ctx context.Context, result contracts.RunResult) error {
+	if err := p.store.CompleteAttempt(ctx, result); err != nil {
+		return err
+	}
 	return p.publishResult(ctx, result)
 }
 

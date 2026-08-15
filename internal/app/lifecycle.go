@@ -91,6 +91,11 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 			return err
 		}
 	}
+	if w.runStore != nil {
+		if err := w.runStore.Close(); err != nil {
+			return err
+		}
+	}
 	if w.metricsServer != nil {
 		if err := w.metricsServer.Shutdown(ctx); err != nil {
 			return err

@@ -9,6 +9,7 @@ import (
 	"overmindv/sandbox/internal/kafka"
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/scheduler"
+	"overmindv/sandbox/internal/storage"
 )
 
 type Worker struct {
@@ -19,6 +20,7 @@ type Worker struct {
 	metricsServer *MetricsServer
 	processor     *kafka.Processor
 	dispatcher    *scheduler.Dispatcher
+	runStore      storage.RunStore
 	started       atomic.Bool
 }
 
@@ -35,7 +37,7 @@ func NewWorkerWithDeps(cfg config.Config, logger *observability.Logger, deps Wor
 	}
 
 	healthState := NewHealthState(cfg)
-	processor, dispatcher, err := newPipeline(cfg, logger, deps)
+	processor, dispatcher, runStore, err := newPipeline(cfg, logger, deps)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +50,7 @@ func NewWorkerWithDeps(cfg config.Config, logger *observability.Logger, deps Wor
 		metricsServer: NewMetricsServer(cfg.Server.MetricsAddr, dispatcher, logger, cfg.Observability.MetricsEnabled),
 		processor:     processor,
 		dispatcher:    dispatcher,
+		runStore:      runStore,
 	}, nil
 }
 

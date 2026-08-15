@@ -11,6 +11,7 @@ import (
 	"overmindv/sandbox/internal/app"
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/kafka"
 	"overmindv/sandbox/internal/observability"
 )
@@ -187,6 +188,111 @@ func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 	}
 	if result.Error == nil || result.Error.Code != "unsupported_language" {
 		t.Errorf("expected unsupported_language error code, got %#v", result.Error)
+	}
+}
+
+func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-idempotency-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+	req := validPipelineRunRequest()
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    1,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    2,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+	executor := &countingExecutor{}
+
+	worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("debug", "json", nil), app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+		Executor: executor,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process first message: %v", err)
+		return
+	}
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process duplicate message: %v", err)
+		return
+	}
+
+	if executor.Calls() != 1 {
+		t.Errorf("expected executor to run once, got %d calls", executor.Calls())
+	}
+	if len(consumer.committed) != 2 {
+		t.Errorf("expected two committed messages, got %d", len(consumer.committed))
+	}
+
+	messages := producer.Messages()
+	if len(messages) != 2 {
+		t.Errorf("expected two result messages, got %d", len(messages))
+		return
+	}
+
+	first, err := kafka.DecodeRunResult(messages[0].Value)
+	if err != nil {
+		t.Errorf("decode first result: %v", err)
+		return
+	}
+	second, err := kafka.DecodeRunResult(messages[1].Value)
+	if err != nil {
+		t.Errorf("decode duplicate result: %v", err)
+		return
+	}
+	if first.AttemptID != req.AttemptID || second.AttemptID != req.AttemptID {
+		t.Errorf("expected both results for attempt %q, got %q and %q", req.AttemptID, first.AttemptID, second.AttemptID)
+	}
+	if first.Status != contracts.StatusPassed || second.Status != contracts.StatusPassed {
+		t.Errorf("expected passed results, got %q and %q", first.Status, second.Status)
+	}
+	if !first.CreatedAt.Equal(second.CreatedAt) {
+		t.Errorf("expected duplicate to republish stored result created_at, got %s and %s", first.CreatedAt, second.CreatedAt)
 	}
 }
 
@@ -368,3 +474,39 @@ func validPipelineRunRequest() contracts.RunRequest {
 
 var _ kafka.Consumer = (*pipelineConsumer)(nil)
 var _ kafka.Producer = (*pipelineProducer)(nil)
+
+type countingExecutor struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (e *countingExecutor) Execute(context.Context, execution.ExecutionCommand) (execution.ExecutionResult, error) {
+	e.mu.Lock()
+	e.calls++
+	e.mu.Unlock()
+
+	exitCode := 0
+	return execution.ExecutionResult{
+		Status:          contracts.StatusPassed,
+		TestsTotal:      1,
+		TestsPassed:     1,
+		TestCases:       []contracts.TestCaseResult{{Name: "counting::passed", Status: "passed"}},
+		Stdout:          "counting executor: passed\n",
+		CPUms:           1,
+		MemoryPeakBytes: 1024,
+		ExitCode:        &exitCode,
+		RunMS:           1,
+	}, nil
+}
+
+func (e *countingExecutor) Healthy() bool {
+	return true
+}
+
+func (e *countingExecutor) Calls() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
+
+var _ execution.Executor = (*countingExecutor)(nil)
