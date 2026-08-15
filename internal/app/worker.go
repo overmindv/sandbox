@@ -12,13 +12,14 @@ import (
 )
 
 type Worker struct {
-	cfg          config.Config
-	logger       *observability.Logger
-	healthState  *HealthState
-	healthServer *HealthServer
-	processor    *kafka.Processor
-	dispatcher   *scheduler.Dispatcher
-	started      atomic.Bool
+	cfg           config.Config
+	logger        *observability.Logger
+	healthState   *HealthState
+	healthServer  *HealthServer
+	metricsServer *MetricsServer
+	processor     *kafka.Processor
+	dispatcher    *scheduler.Dispatcher
+	started       atomic.Bool
 }
 
 func NewWorker(cfg config.Config, logger *observability.Logger) (*Worker, error) {
@@ -40,12 +41,13 @@ func NewWorkerWithDeps(cfg config.Config, logger *observability.Logger, deps Wor
 	}
 
 	return &Worker{
-		cfg:          cfg,
-		logger:       logger,
-		healthState:  healthState,
-		healthServer: NewHealthServer(cfg.Server.HealthAddr, healthState, logger),
-		processor:    processor,
-		dispatcher:   dispatcher,
+		cfg:           cfg,
+		logger:        logger,
+		healthState:   healthState,
+		healthServer:  NewHealthServer(cfg.Server.HealthAddr, healthState, logger),
+		metricsServer: NewMetricsServer(cfg.Server.MetricsAddr, dispatcher, logger, cfg.Observability.MetricsEnabled),
+		processor:     processor,
+		dispatcher:    dispatcher,
 	}, nil
 }
 

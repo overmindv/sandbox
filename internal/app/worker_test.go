@@ -18,6 +18,7 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "worker-smoke-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
 	cfg.Observability.LogFormat = "json"
 	cfg.Observability.LogLevel = "debug"
 

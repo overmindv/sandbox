@@ -1,0 +1,21 @@
+ARG GOJUDGE_IMAGE=criyle/go-judge:latest
+
+FROM ${GOJUDGE_IMAGE}
+
+USER root
+
+RUN set -eux; \
+	if command -v apt-get >/dev/null 2>&1; then \
+		apt-get update; \
+		apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pytest; \
+		rm -rf /var/lib/apt/lists/*; \
+	elif command -v apk >/dev/null 2>&1; then \
+		apk add --no-cache ca-certificates curl python3 py3-pytest; \
+	elif command -v microdnf >/dev/null 2>&1; then \
+		microdnf install -y ca-certificates curl python3 python3-pytest; \
+		microdnf clean all; \
+	else \
+		echo "unsupported go-judge base image: no apt-get, apk, or microdnf" >&2; \
+		exit 1; \
+	fi; \
+	python3 -m pytest --version

@@ -1,0 +1,163 @@
+name: sandbox-local
+
+services:
+  kafka:
+    image: ${SANDBOX_KAFKA_IMAGE:-apache/kafka:3.9.1}
+    container_name: sandbox-kafka
+    restart: unless-stopped
+    ports:
+      - "${SANDBOX_KAFKA_HOST_PORT:-29092}:29092"
+    environment:
+      CLUSTER_ID: ${SANDBOX_KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${SANDBOX_KAFKA_HOST_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - sandbox
+
+  kafka-topics:
+    image: ${SANDBOX_KAFKA_IMAGE:-apache/kafka:3.9.1}
+    container_name: sandbox-kafka-topics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_REQUESTS:-code-execution.requests.v1}" --partitions "${SANDBOX_KAFKA_REQUEST_PARTITIONS:-6}" --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_RESULTS:-code-execution.results.v1}" --partitions "${SANDBOX_KAFKA_RESULT_PARTITIONS:-6}" --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_EVENTS:-code-execution.events.v1}" --partitions "${SANDBOX_KAFKA_EVENT_PARTITIONS:-6}" --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_DEADLETTER:-code-execution.deadletter.v1}" --partitions "${SANDBOX_KAFKA_DLQ_PARTITIONS:-3}" --replication-factor 1
+    networks:
+      - sandbox
+
+  gojudge:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.python-runtime
+      args:
+        GOJUDGE_IMAGE: ${SANDBOX_GOJUDGE_IMAGE:-criyle/go-judge:latest}
+    image: ${SANDBOX_GOJUDGE_LOCAL_IMAGE:-overmindv/sandbox-gojudge-python:local}
+    container_name: sandbox-gojudge
+    restart: unless-stopped
+    privileged: true
+    shm_size: 256m
+    ports:
+      - "${SANDBOX_GOJUDGE_HOST_PORT:-5050}:5050"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5050/version >/dev/null 2>&1 || curl -fsS http://127.0.0.1:5050/version >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - sandbox
+
+  sandbox-worker:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.worker
+      args:
+        GO_VERSION: ${SANDBOX_GO_VERSION:-1.26}
+    image: ${SANDBOX_WORKER_IMAGE:-overmindv/sandbox-worker:local}
+    container_name: sandbox-worker
+    restart: unless-stopped
+    depends_on:
+      kafka-topics:
+        condition: service_completed_successfully
+      gojudge:
+        condition: service_healthy
+    environment:
+      SANDBOX_CONFIG_FILE: configs/local.yaml
+      SANDBOX_ENV: local
+      SANDBOX_WORKER_ID: sandbox-worker-compose-1
+      SANDBOX_KAFKA_BROKERS: kafka:9092
+      SANDBOX_KAFKA_CLIENT_ID: sandbox-worker-local
+      SANDBOX_KAFKA_GROUP_ID: sandbox-code-execution-v1
+      SANDBOX_KAFKA_TOPIC_REQUESTS: ${SANDBOX_KAFKA_TOPIC_REQUESTS:-code-execution.requests.v1}
+      SANDBOX_KAFKA_TOPIC_EVENTS: ${SANDBOX_KAFKA_TOPIC_EVENTS:-code-execution.events.v1}
+      SANDBOX_KAFKA_TOPIC_RESULTS: ${SANDBOX_KAFKA_TOPIC_RESULTS:-code-execution.results.v1}
+      SANDBOX_KAFKA_TOPIC_DEADLETTER: ${SANDBOX_KAFKA_TOPIC_DEADLETTER:-code-execution.deadletter.v1}
+      SANDBOX_EXECUTOR_TYPE: gojudge
+      SANDBOX_GOJUDGE_BASE_URL: http://gojudge:5050
+      SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS: ${SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS:-10000}
+      SANDBOX_FEATURE_FAKE_EXECUTOR: "false"
+      SANDBOX_FEATURE_GOJUDGE_EXECUTOR: "true"
+      SANDBOX_FEATURE_INLINE_TESTS: "true"
+      SANDBOX_FEATURE_OBJECT_STORAGE_TESTS: "false"
+      SANDBOX_LOG_LEVEL: ${SANDBOX_LOG_LEVEL:-debug}
+      SANDBOX_LOG_FORMAT: ${SANDBOX_LOG_FORMAT:-console}
+      SANDBOX_METRICS_ENABLED: "true"
+      SANDBOX_TRACING_ENABLED: "false"
+      SANDBOX_AUDIT_ENABLED: "true"
+    ports:
+      - "${SANDBOX_WORKER_HEALTH_PORT:-8080}:8080"
+      - "${SANDBOX_WORKER_METRICS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - sandbox
+
+  redpanda-console:
+    image: ${SANDBOX_REDPANDA_CONSOLE_IMAGE:-docker.redpanda.com/redpandadata/console:latest}
+    container_name: sandbox-redpanda-console
+    profiles:
+      - ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+    ports:
+      - "${SANDBOX_REDPANDA_CONSOLE_PORT:-8088}:8080"
+    networks:
+      - sandbox
+
+  prometheus:
+    image: ${SANDBOX_PROMETHEUS_IMAGE:-prom/prometheus:latest}
+    container_name: sandbox-prometheus
+    profiles:
+      - observability
+    depends_on:
+      sandbox-worker:
+        condition: service_started
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./deployments/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${SANDBOX_PROMETHEUS_PORT:-9091}:9090"
+    networks:
+      - sandbox
+
+networks:
+  sandbox:
+    name: sandbox-local
+
+volumes:
+  kafka-data:
+  prometheus-data:

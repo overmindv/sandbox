@@ -3,9 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 var ErrWorkerAlreadyStarted = errors.New("worker already started")
+
+const processorErrorBackoff = 250 * time.Millisecond
 
 func (w *Worker) Start(ctx context.Context) error {
 	if w == nil {
@@ -19,8 +22,18 @@ func (w *Worker) Start(ctx context.Context) error {
 		w.started.Store(false)
 		return err
 	}
+	if w.metricsServer != nil {
+		if err := w.metricsServer.Start(ctx); err != nil {
+			_ = w.healthServer.Shutdown(context.Background())
+			w.started.Store(false)
+			return err
+		}
+	}
 	if w.dispatcher != nil {
 		if err := w.dispatcher.Start(ctx); err != nil {
+			if w.metricsServer != nil {
+				_ = w.metricsServer.Shutdown(context.Background())
+			}
 			_ = w.healthServer.Shutdown(context.Background())
 			w.started.Store(false)
 			return err
@@ -36,10 +49,30 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 
-	<-ctx.Done()
+	processorErr := w.runProcessorLoop(ctx)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout())
 	defer cancel()
-	return w.Shutdown(shutdownCtx)
+	shutdownErr := w.Shutdown(shutdownCtx)
+	return errors.Join(processorErr, shutdownErr)
+}
+
+func (w *Worker) runProcessorLoop(ctx context.Context) error {
+	for {
+		if err := w.ProcessOnce(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+
+			w.logger.Error(ctx, "kafka message processing failed", "error", err)
+			timer := time.NewTimer(processorErrorBackoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+		}
+	}
 }
 
 func (w *Worker) Shutdown(ctx context.Context) error {
@@ -55,6 +88,11 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	}
 	if w.processor != nil {
 		if err := w.processor.Close(); err != nil {
+			return err
+		}
+	}
+	if w.metricsServer != nil {
+		if err := w.metricsServer.Shutdown(ctx); err != nil {
 			return err
 		}
 	}

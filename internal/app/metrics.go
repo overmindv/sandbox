@@ -1,0 +1,176 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"overmindv/sandbox/internal/observability"
+	"overmindv/sandbox/internal/scheduler"
+)
+
+type MetricsServer struct {
+	addr       string
+	dispatcher *scheduler.Dispatcher
+	logger     *observability.Logger
+	enabled    bool
+	server     *http.Server
+	listener   net.Listener
+	errCh      chan error
+	mu         sync.RWMutex
+}
+
+func NewMetricsServer(addr string, dispatcher *scheduler.Dispatcher, logger *observability.Logger, enabled bool) *MetricsServer {
+	return &MetricsServer{
+		addr:       addr,
+		dispatcher: dispatcher,
+		logger:     logger,
+		enabled:    enabled,
+		errCh:      make(chan error, 1),
+	}
+}
+
+func (s *MetricsServer) Start(ctx context.Context) error {
+	if s == nil || !s.enabled {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", s.handleMetrics)
+
+	listener, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
+
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+
+	s.mu.Lock()
+	s.listener = listener
+	s.server = server
+	s.mu.Unlock()
+
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.errCh <- err
+			return
+		}
+		s.errCh <- nil
+	}()
+
+	s.logger.Info(ctx, "metrics server started", "addr", listener.Addr().String())
+	return nil
+}
+
+func (s *MetricsServer) Shutdown(ctx context.Context) error {
+	if s == nil || !s.enabled {
+		return nil
+	}
+
+	s.mu.RLock()
+	server := s.server
+	s.mu.RUnlock()
+	if server == nil {
+		return nil
+	}
+
+	err := server.Shutdown(ctx)
+	select {
+	case serveErr := <-s.errCh:
+		if err == nil {
+			err = serveErr
+		}
+	default:
+	}
+	return err
+}
+
+func (s *MetricsServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = w.Write([]byte(s.render()))
+}
+
+func (s *MetricsServer) render() string {
+	var snapshot observability.SchedulerMetricsSnapshot
+	if s.dispatcher != nil {
+		snapshot = s.dispatcher.Metrics()
+	}
+
+	var b strings.Builder
+	writeHelp(&b, "sandbox_scheduler_queue_depth", "gauge", "Current scheduler queue depth.")
+	writeGauge(&b, "sandbox_scheduler_queue_depth", snapshot.QueueDepth)
+	writeHelp(&b, "sandbox_scheduler_queue_capacity", "gauge", "Configured scheduler queue capacity.")
+	writeGauge(&b, "sandbox_scheduler_queue_capacity", snapshot.QueueCapacity)
+	writeHelp(&b, "sandbox_scheduler_in_flight", "gauge", "Current number of in-flight jobs.")
+	writeGauge(&b, "sandbox_scheduler_in_flight", snapshot.InFlight)
+	writeHelp(&b, "sandbox_scheduler_in_flight_by_language", "gauge", "Current in-flight jobs by language.")
+	writeGaugeMap(&b, "sandbox_scheduler_in_flight_by_language", "language", snapshot.InFlightByLanguage)
+	writeHelp(&b, "sandbox_scheduler_jobs_submitted_total", "counter", "Total submitted jobs by language.")
+	writeCounterMap(&b, "sandbox_scheduler_jobs_submitted_total", "language", snapshot.Submitted)
+	writeHelp(&b, "sandbox_scheduler_jobs_rejected_total", "counter", "Total rejected jobs by reason.")
+	writeCounterMap(&b, "sandbox_scheduler_jobs_rejected_total", "reason", snapshot.Rejected)
+	writeHelp(&b, "sandbox_scheduler_jobs_started_total", "counter", "Total started jobs by language.")
+	writeCounterMap(&b, "sandbox_scheduler_jobs_started_total", "language", snapshot.Started)
+	writeHelp(&b, "sandbox_scheduler_jobs_completed_total", "counter", "Total completed jobs by status.")
+	writeCounterMap(&b, "sandbox_scheduler_jobs_completed_total", "status", snapshot.Completed)
+	writeHelp(&b, "sandbox_scheduler_jobs_timed_out_total", "counter", "Total timed out jobs by language.")
+	writeCounterMap(&b, "sandbox_scheduler_jobs_timed_out_total", "language", snapshot.TimedOut)
+	return b.String()
+}
+
+func writeHelp(b *strings.Builder, name, metricType, help string) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, metricType)
+}
+
+func writeGauge(b *strings.Builder, name string, value int) {
+	fmt.Fprintf(b, "%s %d\n", name, value)
+}
+
+func writeGaugeMap(b *strings.Builder, name string, label string, values map[string]int) {
+	keys := sortedIntKeys(values)
+	for _, key := range keys {
+		fmt.Fprintf(b, "%s{%s=%q} %d\n", name, label, escapeLabelValue(key), values[key])
+	}
+}
+
+func writeCounterMap(b *strings.Builder, name string, label string, values map[string]int64) {
+	keys := sortedInt64Keys(values)
+	for _, key := range keys {
+		fmt.Fprintf(b, "%s{%s=%q} %d\n", name, label, escapeLabelValue(key), values[key])
+	}
+}
+
+func sortedIntKeys(values map[string]int) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedInt64Keys(values map[string]int64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func escapeLabelValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "\n", `\n`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return value
+}

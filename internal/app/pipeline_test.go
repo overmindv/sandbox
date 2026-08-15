@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "pipeline-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
 	cfg.Executor.Type = "fake"
 	cfg.Executor.Fake.DefaultStatus = "passed"
 	cfg.Executor.Fake.LatencyMS = 0
@@ -114,6 +116,7 @@ func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "pipeline-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
 	cfg.Executor.Type = "fake"
 	cfg.Executor.Fake.LatencyMS = 0
 	cfg.Scheduler.JobTimeoutMS = 1000
@@ -187,6 +190,86 @@ func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 	}
 }
 
+func TestWorkerRunConsumesKafkaUntilShutdown(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-run-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Executor.Fake.DefaultStatus = "passed"
+	cfg.Executor.Fake.LatencyMS = 0
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+	req := validPipelineRunRequest()
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    1,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	resultWritten := make(chan struct{}, 1)
+	producer := &pipelineProducer{
+		onWrite: func() {
+			select {
+			case resultWritten <- struct{}{}:
+			default:
+			}
+		},
+	}
+
+	worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("debug", "json", nil), app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- worker.Run(ctx)
+	}()
+
+	select {
+	case <-resultWritten:
+	case <-time.After(time.Second):
+		t.Error("expected worker run loop to publish result")
+		cancel()
+		return
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("run worker: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("expected worker run loop to stop after cancel")
+	}
+
+	messages := producer.Messages()
+	if len(messages) != 1 {
+		t.Errorf("expected one result message, got %d", len(messages))
+	}
+}
+
 type pipelineConsumer struct {
 	messages  []kafka.Message
 	committed []kafka.Message
@@ -211,16 +294,31 @@ func (c *pipelineConsumer) Close() error {
 }
 
 type pipelineProducer struct {
+	mu       sync.Mutex
 	messages []kafka.Message
+	onWrite  func()
 }
 
 func (p *pipelineProducer) WriteMessages(_ context.Context, messages ...kafka.Message) error {
+	p.mu.Lock()
 	p.messages = append(p.messages, messages...)
+	p.mu.Unlock()
+	if p.onWrite != nil {
+		p.onWrite()
+	}
 	return nil
 }
 
 func (p *pipelineProducer) Close() error {
 	return nil
+}
+
+func (p *pipelineProducer) Messages() []kafka.Message {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	messages := make([]kafka.Message, len(p.messages))
+	copy(messages, p.messages)
+	return messages
 }
 
 func validPipelineRunRequest() contracts.RunRequest {
