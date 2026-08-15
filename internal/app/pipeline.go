@@ -10,6 +10,7 @@ import (
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/execution/fake"
+	"overmindv/sandbox/internal/execution/gojudge"
 	"overmindv/sandbox/internal/kafka"
 	"overmindv/sandbox/internal/languages"
 	pythonadapter "overmindv/sandbox/internal/languages/python"
@@ -114,6 +115,12 @@ func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
 	switch cfg.Type {
 	case "fake":
 		return fake.NewExecutor(cfg.Fake)
+	case "gojudge":
+		goJudgeConfig := cfg.GoJudge
+		if goJudgeConfig.RequestTimeoutMS <= 0 {
+			goJudgeConfig.RequestTimeoutMS = cfg.ClientTimeoutMS
+		}
+		return gojudge.NewExecutor(goJudgeConfig)
 	default:
 		return nil, fmt.Errorf("unsupported executor type %q for worker pipeline", cfg.Type)
 	}
