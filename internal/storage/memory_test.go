@@ -74,6 +74,71 @@ func TestMemoryRunStoreDuplicateRunningAttempt(t *testing.T) {
 	}
 }
 
+func TestMemoryRunStoreRetryableFailureCanBeReservedAgain(t *testing.T) {
+	store := storage.NewMemoryRunStore()
+	req := validStorageRunRequest()
+
+	if _, err := store.ReserveAttempt(context.Background(), req, "worker-1"); err != nil {
+		t.Errorf("reserve attempt: %v", err)
+		return
+	}
+	if err := store.FailAttempt(context.Background(), storage.AttemptFailure{
+		AttemptID:        req.AttemptID,
+		SubmissionID:     req.SubmissionID,
+		WorkerInstanceID: "worker-1",
+		Status:           storage.AttemptStatusFailedInternal,
+		ErrorClass:       "infra",
+		Reason:           "gojudge_unavailable",
+		Message:          "dial tcp failed",
+		DeliveryAttempts: 1,
+		FailedAt:         time.Now().UTC(),
+	}); err != nil {
+		t.Errorf("fail attempt: %v", err)
+		return
+	}
+
+	attempt, ok, err := store.GetAttempt(context.Background(), req.AttemptID)
+	if err != nil {
+		t.Errorf("get failed attempt: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected failed attempt")
+		return
+	}
+	if attempt.Status != storage.AttemptStatusFailedInternal {
+		t.Errorf("expected failed_internal status, got %q", attempt.Status)
+	}
+	if attempt.LastErrorReason != "gojudge_unavailable" {
+		t.Errorf("expected last error reason, got %#v", attempt)
+	}
+
+	reservation, err := store.ReserveAttempt(context.Background(), req, "worker-2")
+	if err != nil {
+		t.Errorf("reserve retry attempt: %v", err)
+		return
+	}
+	if reservation.State != storage.AttemptReserved {
+		t.Errorf("expected retry reservation, got %q", reservation.State)
+	}
+
+	attempt, ok, err = store.GetAttempt(context.Background(), req.AttemptID)
+	if err != nil {
+		t.Errorf("get retried attempt: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected retried attempt")
+		return
+	}
+	if attempt.Status != storage.AttemptStatusRunning {
+		t.Errorf("expected running status after retry reservation, got %q", attempt.Status)
+	}
+	if attempt.WorkerInstanceID != "worker-2" {
+		t.Errorf("expected retry worker id, got %q", attempt.WorkerInstanceID)
+	}
+}
+
 func TestMemoryRunStoreAttemptConflict(t *testing.T) {
 	store := storage.NewMemoryRunStore()
 	req := validStorageRunRequest()
@@ -248,6 +313,12 @@ func TestMemoryRunStoreStoresAttemptResultsArtifactsAndOutbox(t *testing.T) {
 	if len(artifacts) != 2 {
 		t.Errorf("expected stdout and stderr artifacts, got %d", len(artifacts))
 		return
+	}
+	if artifacts[0].ContentType == "" || artifacts[1].ContentType == "" {
+		t.Errorf("expected artifact content types, got %#v", artifacts)
+	}
+	if artifacts[0].StorageProvider != storage.ArtifactStoragePostgresJSON {
+		t.Errorf("expected inline artifact metadata provider, got %q", artifacts[0].StorageProvider)
 	}
 
 	event, err := storage.ResultOutboxEvent(attempt.RunID, result, "code-execution.results.v1", time.Now().UTC())

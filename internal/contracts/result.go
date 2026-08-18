@@ -45,9 +45,24 @@ type ResultResources struct {
 }
 
 type ResultLogs struct {
-	Stdout    string `json:"stdout"`
-	Stderr    string `json:"stderr"`
-	Truncated bool   `json:"truncated"`
+	Stdout          string             `json:"stdout"`
+	Stderr          string             `json:"stderr"`
+	Truncated       bool               `json:"truncated"`
+	InlineTruncated bool               `json:"inline_truncated,omitempty"`
+	StdoutArtifact  *ArtifactReference `json:"stdout_artifact,omitempty"`
+	StderrArtifact  *ArtifactReference `json:"stderr_artifact,omitempty"`
+}
+
+type ArtifactReference struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Provider    string `json:"provider"`
+	Bucket      string `json:"bucket,omitempty"`
+	Key         string `json:"key"`
+	ContentType string `json:"content_type"`
+	SHA256      string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
+	Truncated   bool   `json:"truncated"`
 }
 
 type TestCaseResult struct {

@@ -20,6 +20,7 @@ feature_flags:
   gojudge_executor: true
   inline_tests: true
   object_storage_tests: true
+  object_storage_artifacts: true
 
 kafka:
   brokers:
@@ -28,6 +29,7 @@ kafka:
   group_id: sandbox-code-execution-v1
   topics:
     requests: code-execution.requests.v1
+    retry: code-execution.retry.v1
     events: code-execution.events.v1
     results: code-execution.results.v1
     deadletter: code-execution.deadletter.v1
@@ -43,6 +45,13 @@ kafka:
     compression: zstd
     linger_ms: 20
     request_timeout_ms: 15000
+  retry:
+    enabled: true
+    max_attempts: 5
+    initial_backoff_ms: 1000
+    max_backoff_ms: 120000
+    backoff_multiplier: 2
+    early_retry_sleep_cap_ms: 15000
 
 scheduler:
   max_in_flight: 64
@@ -83,7 +92,13 @@ tests:
     bucket: ${SANDBOX_TESTS_BUCKET}
     endpoint: ${SANDBOX_TESTS_ENDPOINT}
     region: ${SANDBOX_TESTS_REGION}
+    access_key_id: ${SANDBOX_TESTS_ACCESS_KEY_ID}
+    secret_access_key: ${SANDBOX_TESTS_SECRET_ACCESS_KEY}
+    key_prefix: sandbox-tests/prod
     cache_ttl_ms: 600000
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: false
 
 storage:
   type: postgres
@@ -91,6 +106,20 @@ storage:
     dsn: ${SANDBOX_POSTGRES_DSN}
     max_open_connections: 30
     max_idle_connections: 10
+  artifacts:
+    enabled: true
+    provider: s3
+    bucket: ${SANDBOX_ARTIFACTS_BUCKET}
+    endpoint: ${SANDBOX_ARTIFACTS_ENDPOINT}
+    region: ${SANDBOX_ARTIFACTS_REGION}
+    access_key_id: ${SANDBOX_ARTIFACTS_ACCESS_KEY_ID}
+    secret_access_key: ${SANDBOX_ARTIFACTS_SECRET_ACCESS_KEY}
+    root_dir: ""
+    key_prefix: sandbox-artifacts/prod
+    inline_max_bytes: 2048
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: false
   retention:
     completed_runs_days: 90
     artifacts_days: 30

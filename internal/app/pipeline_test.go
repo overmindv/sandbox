@@ -4,17 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"overmindv/sandbox/internal/app"
+	"overmindv/sandbox/internal/artifacts"
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/kafka"
+	"overmindv/sandbox/internal/objectstore"
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/storage"
+	"overmindv/sandbox/internal/testsources"
 )
 
 func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
@@ -135,6 +141,248 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 	if outboxEvents[0].RunID != run.RunID || outboxEvents[0].AttemptID != req.AttemptID {
 		t.Errorf("expected outbox to reference run %q attempt %q, got %#v", run.RunID, req.AttemptID, outboxEvents[0])
+	}
+}
+
+func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-artifact-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+	cfg.Storage.Artifacts.Enabled = true
+	cfg.Storage.Artifacts.Provider = "filesystem"
+	cfg.Storage.Artifacts.Bucket = "local"
+	cfg.Storage.Artifacts.KeyPrefix = "test-artifacts"
+	cfg.Storage.Artifacts.InlineMaxBytes = 8
+	cfg.Storage.Artifacts.MaxBytes = 1024
+
+	req := validPipelineRunRequest()
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    2,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+	store := storage.NewMemoryRunStore()
+	metrics := observability.NewSchedulerMetrics()
+	objectStore, err := objectstore.NewFilesystemStore(objectstore.FilesystemConfig{
+		RootDir: t.TempDir(),
+		Bucket:  "local",
+	})
+	if err != nil {
+		t.Errorf("create filesystem object store: %v", err)
+		return
+	}
+	artifactManager, err := artifacts.NewManager(cfg.Storage.Artifacts, objectStore)
+	if err != nil {
+		t.Errorf("create artifact manager: %v", err)
+		return
+	}
+
+	worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("debug", "json", nil), app.WorkerDeps{
+		Consumer:  consumer,
+		Producer:  producer,
+		RunStore:  store,
+		Executor:  &stdoutExecutor{stdout: strings.Repeat("x", 64)},
+		Metrics:   metrics,
+		Artifacts: artifactManager,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one result message, got %d", len(producer.messages))
+		return
+	}
+
+	result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode result: %v", err)
+		return
+	}
+	if result.Logs.Stdout != strings.Repeat("x", 8) {
+		t.Errorf("expected stdout preview, got %q", result.Logs.Stdout)
+	}
+	if !result.Logs.InlineTruncated {
+		t.Error("expected inline truncated flag")
+	}
+	if result.Logs.StdoutArtifact == nil {
+		t.Error("expected stdout artifact reference")
+		return
+	}
+
+	artifactBody, err := objectStore.Get(context.Background(), result.Logs.StdoutArtifact.Bucket, result.Logs.StdoutArtifact.Key)
+	if err != nil {
+		t.Errorf("get stdout artifact: %v", err)
+		return
+	}
+	if string(artifactBody) != strings.Repeat("x", 64) {
+		t.Errorf("expected full stdout artifact body, got %q", string(artifactBody))
+	}
+
+	attempt, ok, err := store.GetAttempt(context.Background(), req.AttemptID)
+	if err != nil {
+		t.Errorf("get attempt: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected stored attempt")
+		return
+	}
+	artifactRows, err := store.ListArtifacts(context.Background(), attempt.RunID, req.AttemptID)
+	if err != nil {
+		t.Errorf("list artifacts: %v", err)
+		return
+	}
+	if len(artifactRows) != 1 {
+		t.Errorf("expected one artifact row, got %d", len(artifactRows))
+		return
+	}
+	if artifactRows[0].ObjectKey != result.Logs.StdoutArtifact.Key {
+		t.Errorf("expected artifact row key %q, got %q", result.Logs.StdoutArtifact.Key, artifactRows[0].ObjectKey)
+	}
+	if artifactRows[0].StorageProvider != storage.ArtifactStorageFilesystem {
+		t.Errorf("expected filesystem artifact provider, got %q", artifactRows[0].StorageProvider)
+	}
+	snapshot := metrics.Snapshot()
+	if snapshot.ArtifactsStored["stdout"] != 1 {
+		t.Errorf("expected stdout artifact metric, got %#v", snapshot.ArtifactsStored)
+	}
+	if snapshot.ArtifactBytes["stdout"] != 64 {
+		t.Errorf("expected stdout artifact bytes metric, got %#v", snapshot.ArtifactBytes)
+	}
+}
+
+func TestWorkerPipelineResolvesObjectStorageTests(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-test-source-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+	testSources, suiteChecksum := objectStorageTestProvider(t)
+	req := validPipelineRunRequest()
+	req.Tests.Source = contracts.TestSourceObjectStorage
+	req.Tests.SuiteID = "suite-1"
+	req.Tests.Version = "v1"
+	req.Tests.ChecksumSHA256 = suiteChecksum
+	req.Tests.Entrypoint = ""
+	req.Tests.Files = nil
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    3,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+	store := storage.NewMemoryRunStore()
+
+	worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("debug", "json", nil), app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+		RunStore: store,
+		Executor: &countingExecutor{},
+		Tests:    testSources,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one result message, got %d", len(producer.messages))
+		return
+	}
+	result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusPassed {
+		t.Errorf("expected passed result, got %q", result.Status)
+	}
+	run, ok, err := store.GetRunBySubmission(context.Background(), req.SubmissionID)
+	if err != nil {
+		t.Errorf("get run: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected run")
+		return
+	}
+	tests, err := store.ListRunTests(context.Background(), run.RunID)
+	if err != nil {
+		t.Errorf("list run tests: %v", err)
+		return
+	}
+	if len(tests) != 1 || tests[0].Source != string(contracts.TestSourceObjectStorage) {
+		t.Errorf("expected original object storage test snapshot, got %#v", tests)
 	}
 }
 
@@ -321,6 +569,116 @@ func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
 	}
 }
 
+func TestWorkerPipelineRetryableExecutorErrorSchedulesRetry(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-retry-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+	cfg.Kafka.Retry.Enabled = true
+	cfg.Kafka.Retry.MaxAttempts = 3
+	cfg.Kafka.Retry.InitialBackoffMS = 0
+	cfg.Kafka.Retry.MaxBackoffMS = 0
+	cfg.Kafka.Retry.BackoffMultiplier = 1
+
+	req := validPipelineRunRequest()
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    10,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+	store := storage.NewMemoryRunStore()
+
+	worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("debug", "json", nil), app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+		Executor: &failingExecutor{err: errors.New("go-judge unavailable")},
+		RunStore: store,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process retryable message: %v", err)
+		return
+	}
+	if len(consumer.committed) != 1 {
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
+	}
+
+	messages := producer.Messages()
+	if len(messages) != 1 {
+		t.Errorf("expected one retry message, got %d", len(messages))
+		return
+	}
+	if messages[0].Topic != cfg.Kafka.Topics.Retry {
+		t.Errorf("expected retry topic %q, got %q", cfg.Kafka.Topics.Retry, messages[0].Topic)
+	}
+	if messages[0].Headers[kafka.HeaderRetryCount] != "1" {
+		t.Errorf("expected retry count 1, got %q", messages[0].Headers[kafka.HeaderRetryCount])
+	}
+
+	attempt, ok, err := store.GetAttempt(context.Background(), req.AttemptID)
+	if err != nil {
+		t.Errorf("get attempt: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected stored attempt")
+		return
+	}
+	if attempt.Status != storage.AttemptStatusFailedInternal {
+		t.Errorf("expected failed_internal attempt, got %q", attempt.Status)
+	}
+	if attempt.LastErrorReason != "execution_infra_error" {
+		t.Errorf("expected execution_infra_error reason, got %#v", attempt)
+	}
+
+	outboxEvents, err := store.ListOutboxEvents(context.Background(), storage.OutboxFilter{Status: storage.OutboxStatusPending})
+	if err != nil {
+		t.Errorf("list outbox events: %v", err)
+		return
+	}
+	if len(outboxEvents) != 1 {
+		t.Errorf("expected one retry outbox event, got %d", len(outboxEvents))
+		return
+	}
+	if outboxEvents[0].EventType != storage.OutboxEventRetryReady {
+		t.Errorf("expected retry outbox event, got %q", outboxEvents[0].EventType)
+	}
+}
+
 func TestWorkerRunConsumesKafkaUntilShutdown(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "pipeline-run-worker-test"
@@ -497,6 +855,55 @@ func validPipelineRunRequest() contracts.RunRequest {
 	}
 }
 
+func objectStorageTestProvider(t *testing.T) (testsources.Provider, string) {
+	t.Helper()
+
+	content := []byte("from solution import add\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+	suite := testsources.Suite{
+		SchemaVersion: testsources.SuiteSchemaVersion,
+		SuiteID:       "suite-1",
+		Version:       "v1",
+		Mode:          contracts.TestModePytest,
+		Entrypoint:    "test_solution.py",
+		Files: []contracts.SourceFile{
+			{
+				Path:           "test_solution.py",
+				ContentB64:     base64.StdEncoding.EncodeToString(content),
+				ChecksumSHA256: testsources.SHA256Hex(content),
+			},
+		},
+	}
+	payload, err := json.Marshal(suite)
+	if err != nil {
+		t.Errorf("marshal suite: %v", err)
+		return testsources.InlineProvider{}, ""
+	}
+	store := objectstore.NewMemoryStore("tests")
+	key, err := testsources.SuiteKey("sandbox-tests", suite.SuiteID, suite.Version)
+	if err != nil {
+		t.Errorf("build suite key: %v", err)
+		return testsources.InlineProvider{}, ""
+	}
+	if _, err := store.Put(context.Background(), objectstore.Object{
+		Bucket:      "tests",
+		Key:         key,
+		ContentType: "application/json",
+		Content:     payload,
+	}); err != nil {
+		t.Errorf("put suite: %v", err)
+		return testsources.InlineProvider{}, ""
+	}
+	return testsources.NewResolver(
+		testsources.NewObjectStorageProvider(config.ObjectStorageTestsConfig{
+			Enabled:   true,
+			Provider:  "s3",
+			Bucket:    "tests",
+			KeyPrefix: "sandbox-tests",
+			MaxBytes:  1024,
+		}, store),
+	), testsources.SHA256Hex(payload)
+}
+
 var _ kafka.Consumer = (*pipelineConsumer)(nil)
 var _ kafka.Producer = (*pipelineProducer)(nil)
 
@@ -535,3 +942,42 @@ func (e *countingExecutor) Calls() int {
 }
 
 var _ execution.Executor = (*countingExecutor)(nil)
+
+type stdoutExecutor struct {
+	stdout string
+}
+
+func (e *stdoutExecutor) Execute(context.Context, execution.ExecutionCommand) (execution.ExecutionResult, error) {
+	exitCode := 0
+	return execution.ExecutionResult{
+		Status:          contracts.StatusPassed,
+		TestsTotal:      1,
+		TestsPassed:     1,
+		TestCases:       []contracts.TestCaseResult{{Name: "stdout::passed", Status: "passed"}},
+		Stdout:          e.stdout,
+		CPUms:           1,
+		MemoryPeakBytes: 1024,
+		ExitCode:        &exitCode,
+		RunMS:           1,
+	}, nil
+}
+
+func (e *stdoutExecutor) Healthy() bool {
+	return true
+}
+
+var _ execution.Executor = (*stdoutExecutor)(nil)
+
+type failingExecutor struct {
+	err error
+}
+
+func (e *failingExecutor) Execute(context.Context, execution.ExecutionCommand) (execution.ExecutionResult, error) {
+	return execution.ExecutionResult{}, e.err
+}
+
+func (e *failingExecutor) Healthy() bool {
+	return true
+}
+
+var _ execution.Executor = (*failingExecutor)(nil)

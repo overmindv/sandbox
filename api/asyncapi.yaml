@@ -14,6 +14,11 @@ channels:
     messages:
       SandboxRunRequest:
         $ref: '#/components/messages/SandboxRunRequest'
+  codeExecutionRetryV1:
+    address: code-execution.retry.v1
+    messages:
+      SandboxRunRequest:
+        $ref: '#/components/messages/SandboxRunRequest'
   codeExecutionEventsV1:
     address: code-execution.events.v1
     messages:
@@ -42,6 +47,12 @@ operations:
       $ref: '#/channels/codeExecutionEventsV1'
     messages:
       - $ref: '#/channels/codeExecutionEventsV1/messages/SandboxRunEvent'
+  publishRunRetry:
+    action: send
+    channel:
+      $ref: '#/channels/codeExecutionRetryV1'
+    messages:
+      - $ref: '#/channels/codeExecutionRetryV1/messages/SandboxRunRequest'
   publishRunResults:
     action: send
     channel:
@@ -88,6 +99,12 @@ components:
         - $ref: '#/components/messageTraits/solutionKeyed'
       payload:
         $ref: './schemas/sandbox.run.deadletter.v1.json'
+    SandboxTestSuite:
+      name: SandboxTestSuite
+      title: Sandbox test suite v1
+      contentType: application/json
+      payload:
+        $ref: './schemas/sandbox.testsuite.v1.json'
   messageTraits:
     solutionKeyed:
       headers:
@@ -99,6 +116,21 @@ components:
           x-schema-version:
             type: string
           x-producer:
+            type: string
+          x-retry-count:
+            type: string
+          x-retry-reason:
+            type: string
+          x-retry-error-class:
+            type: string
+          x-retry-not-before:
+            type: string
+            format: date-time
+          x-original-topic:
+            type: string
+          x-original-partition:
+            type: string
+          x-original-offset:
             type: string
       bindings:
         kafka:

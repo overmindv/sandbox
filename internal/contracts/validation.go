@@ -11,6 +11,7 @@ var (
 	uuidPattern       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 	languageIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	filePathPattern   = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+	testRefPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	checksumPattern   = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
@@ -152,15 +153,18 @@ func validateTests(errs *ValidationErrors, tests TestSpec, opts ValidationOption
 			validateSafePath(errs, "tests.entrypoint", tests.Entrypoint, opts.MaxPathLength)
 		}
 		validateFiles(errs, "tests.files", tests.Files, opts.MaxTestFiles, opts)
-		if tests.SuiteID != "" || tests.ChecksumSHA256 != "" {
-			errs.add("tests", "inline tests must not set suite_id or checksum_sha256")
+		if tests.SuiteID != "" || tests.Version != "" || tests.ChecksumSHA256 != "" {
+			errs.add("tests", "inline tests must not set suite_id, version, or checksum_sha256")
 		}
 	case TestSourceObjectStorage:
 		if len(tests.Files) > 0 {
 			errs.add("tests.files", "object storage tests must not include inline files")
 		}
-		if tests.SuiteID == "" || len(tests.SuiteID) > 128 {
-			errs.add("tests.suite_id", "must be 1-128 characters")
+		if tests.SuiteID == "" || len(tests.SuiteID) > 128 || !testRefPattern.MatchString(tests.SuiteID) {
+			errs.add("tests.suite_id", "must be 1-128 safe segment characters")
+		}
+		if tests.Version != "" && (len(tests.Version) > 64 || !testRefPattern.MatchString(tests.Version)) {
+			errs.add("tests.version", "must be 1-64 safe segment characters")
 		}
 		if !checksumPattern.MatchString(tests.ChecksumSHA256) {
 			errs.add("tests.checksum_sha256", "must be a lowercase sha256 hex digest")

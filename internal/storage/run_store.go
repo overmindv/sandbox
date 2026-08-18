@@ -40,6 +40,7 @@ type IdempotencyKeyBinding struct {
 type RunStore interface {
 	ReserveAttempt(ctx context.Context, req contracts.RunRequest, workerID string) (AttemptReservation, error)
 	CompleteAttempt(ctx context.Context, result contracts.RunResult) error
+	FailAttempt(ctx context.Context, failure AttemptFailure) error
 	GetAttemptResult(ctx context.Context, attemptID string) (contracts.RunResult, bool, error)
 	BindIdempotencyKey(ctx context.Context, key string, attemptID string) (IdempotencyKeyBinding, error)
 	UpsertWorkerInstance(ctx context.Context, worker WorkerInstanceRecord) error

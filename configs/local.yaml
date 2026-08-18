@@ -20,6 +20,7 @@ feature_flags:
   gojudge_executor: false
   inline_tests: true
   object_storage_tests: false
+  object_storage_artifacts: true
 
 kafka:
   brokers:
@@ -28,6 +29,7 @@ kafka:
   group_id: sandbox-code-execution-v1
   topics:
     requests: code-execution.requests.v1
+    retry: code-execution.retry.v1
     events: code-execution.events.v1
     results: code-execution.results.v1
     deadletter: code-execution.deadletter.v1
@@ -43,6 +45,13 @@ kafka:
     compression: zstd
     linger_ms: 5
     request_timeout_ms: 10000
+  retry:
+    enabled: true
+    max_attempts: 3
+    initial_backoff_ms: 500
+    max_backoff_ms: 30000
+    backoff_multiplier: 2
+    early_retry_sleep_cap_ms: 5000
 
 scheduler:
   max_in_flight: 4
@@ -80,7 +89,13 @@ tests:
     bucket: ""
     endpoint: ""
     region: ""
+    access_key_id: ""
+    secret_access_key: ""
+    key_prefix: sandbox-tests
     cache_ttl_ms: 0
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: true
 
 storage:
   type: memory
@@ -88,6 +103,20 @@ storage:
     dsn: ""
     max_open_connections: 5
     max_idle_connections: 2
+  artifacts:
+    enabled: true
+    provider: filesystem
+    bucket: ""
+    endpoint: ""
+    region: ""
+    access_key_id: ""
+    secret_access_key: ""
+    root_dir: .sandbox-artifacts
+    key_prefix: sandbox-artifacts
+    inline_max_bytes: 4096
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: true
   retention:
     completed_runs_days: 7
     artifacts_days: 7

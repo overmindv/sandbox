@@ -30,6 +30,9 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	t.Setenv("SANDBOX_FEATURE_GOJUDGE_EXECUTOR", "true")
 	t.Setenv("SANDBOX_GOJUDGE_BASE_URL", "http://gojudge.test")
 	t.Setenv("SANDBOX_KAFKA_BROKERS", "kafka-1:9092,kafka-2:9092")
+	t.Setenv("SANDBOX_ARTIFACTS_PROVIDER", "filesystem")
+	t.Setenv("SANDBOX_ARTIFACTS_ROOT_DIR", ".test-artifacts")
+	t.Setenv("SANDBOX_ARTIFACTS_INLINE_MAX_BYTES", "123")
 
 	cfg, err := Load(filepath.Join("..", "..", "configs", "local.yaml"))
 	if err != nil {
@@ -44,6 +47,12 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	}
 	if len(cfg.Kafka.Brokers) != 2 {
 		t.Errorf("expected two kafka brokers, got %#v", cfg.Kafka.Brokers)
+	}
+	if cfg.Storage.Artifacts.RootDir != ".test-artifacts" {
+		t.Errorf("expected artifact root env override, got %q", cfg.Storage.Artifacts.RootDir)
+	}
+	if cfg.Storage.Artifacts.InlineMaxBytes != 123 {
+		t.Errorf("expected artifact inline max env override, got %d", cfg.Storage.Artifacts.InlineMaxBytes)
 	}
 }
 

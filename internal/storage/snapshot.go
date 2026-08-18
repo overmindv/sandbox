@@ -202,10 +202,14 @@ func AttemptTestResultsFromRunResult(result contracts.RunResult, createdAt time.
 
 func ArtifactsFromRunResult(runID string, result contracts.RunResult, createdAt time.Time) []ArtifactRecord {
 	records := make([]ArtifactRecord, 0, 2)
-	if result.Logs.Stdout != "" {
+	if result.Logs.StdoutArtifact != nil {
+		records = append(records, artifactFromReference(runID, result.AttemptID, ArtifactKindStdout, *result.Logs.StdoutArtifact, createdAt))
+	} else if result.Logs.Stdout != "" {
 		records = append(records, logArtifact(runID, result.AttemptID, ArtifactKindStdout, result.Logs.Stdout, result.Logs.Truncated, createdAt))
 	}
-	if result.Logs.Stderr != "" {
+	if result.Logs.StderrArtifact != nil {
+		records = append(records, artifactFromReference(runID, result.AttemptID, ArtifactKindStderr, *result.Logs.StderrArtifact, createdAt))
+	} else if result.Logs.Stderr != "" {
 		records = append(records, logArtifact(runID, result.AttemptID, ArtifactKindStderr, result.Logs.Stderr, result.Logs.Truncated, createdAt))
 	}
 	return records
@@ -254,9 +258,39 @@ func logArtifact(runID string, attemptID string, kind ArtifactKind, content stri
 		AttemptID:       attemptID,
 		Kind:            kind,
 		StorageProvider: ArtifactStoragePostgresJSON,
+		ContentType:     "text/plain; charset=utf-8",
 		ContentHash:     hex.EncodeToString(sum[:]),
 		SizeBytes:       int64(len([]byte(content))),
 		Truncated:       truncated,
+		CreatedAt:       createdAt,
+	}
+}
+
+func artifactFromReference(runID string, attemptID string, kind ArtifactKind, ref contracts.ArtifactReference, createdAt time.Time) ArtifactRecord {
+	artifactID := ref.ID
+	if artifactID == "" {
+		artifactID = StableUUID("artifact", attemptID, string(kind))
+	}
+	storageProvider := ArtifactStorageProvider(ref.Provider)
+	if storageProvider == "" {
+		storageProvider = ArtifactStorageS3
+	}
+	contentType := ref.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return ArtifactRecord{
+		ArtifactID:      artifactID,
+		RunID:           runID,
+		AttemptID:       attemptID,
+		Kind:            kind,
+		StorageProvider: storageProvider,
+		Bucket:          ref.Bucket,
+		ObjectKey:       ref.Key,
+		ContentType:     contentType,
+		ContentHash:     ref.SHA256,
+		SizeBytes:       ref.SizeBytes,
+		Truncated:       ref.Truncated,
 		CreatedAt:       createdAt,
 	}
 }

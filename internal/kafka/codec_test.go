@@ -93,6 +93,7 @@ func TestEventResultAndDeadLetterSerialization(t *testing.T) {
 		OriginalPartition:  1,
 		OriginalOffset:     42,
 		OriginalKey:        &key,
+		OriginalHeaders:    map[string]string{HeaderTraceID: "trace-111"},
 		OriginalPayloadB64: &payload,
 		TraceID:            event.TraceID,
 		WorkerID:           event.WorkerID,

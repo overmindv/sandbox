@@ -134,6 +134,15 @@
         },
         "truncated": {
           "type": "boolean"
+        },
+        "inline_truncated": {
+          "type": "boolean"
+        },
+        "stdout_artifact": {
+          "$ref": "#/$defs/artifact_reference"
+        },
+        "stderr_artifact": {
+          "$ref": "#/$defs/artifact_reference"
         }
       }
     },
@@ -220,6 +229,50 @@
         "invalid_request",
         "unsupported_language"
       ]
+    },
+    "artifact_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "provider", "key", "content_type", "sha256", "size_bytes", "truncated"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["stdout", "stderr", "compile_log", "pytest_json", "run_archive"]
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["filesystem", "s3"]
+        },
+        "bucket": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "examples": [

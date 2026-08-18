@@ -85,6 +85,36 @@ func TestValidateRunRequestRejectsObjectStorageWithoutChecksum(t *testing.T) {
 	}
 }
 
+func TestValidateRunRequestAcceptsObjectStorageTestsRef(t *testing.T) {
+	req := validRunRequest()
+	req.Tests = TestSpec{
+		Mode:           TestModePytest,
+		Source:         TestSourceObjectStorage,
+		SuiteID:        "python-addition",
+		Version:        "v1",
+		ChecksumSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+
+	if err := ValidateRunRequest(req); err != nil {
+		t.Errorf("expected object storage tests ref to be valid: %v", err)
+	}
+}
+
+func TestValidateRunRequestRejectsUnsafeObjectStorageSuiteID(t *testing.T) {
+	req := validRunRequest()
+	req.Tests = TestSpec{
+		Mode:           TestModePytest,
+		Source:         TestSourceObjectStorage,
+		SuiteID:        "../python-addition",
+		ChecksumSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+
+	err := ValidateRunRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "tests.suite_id") {
+		t.Errorf("expected suite id validation error, got: %v", err)
+	}
+}
+
 func TestExecutionStatusValidityAndTerminalState(t *testing.T) {
 	if !StatusPassed.Valid() || !StatusPassed.Terminal() {
 		t.Error("passed must be valid and terminal")

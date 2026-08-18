@@ -14,6 +14,7 @@ try {
 
     $topics = @(
         @{ Name = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_TOPIC_REQUESTS" "code-execution.requests.v1"; Partitions = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_REQUEST_PARTITIONS" "6" },
+        @{ Name = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_TOPIC_RETRY" "code-execution.retry.v1"; Partitions = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_RETRY_PARTITIONS" "6" },
         @{ Name = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_TOPIC_RESULTS" "code-execution.results.v1"; Partitions = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_RESULT_PARTITIONS" "6" },
         @{ Name = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_TOPIC_EVENTS" "code-execution.events.v1"; Partitions = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_EVENT_PARTITIONS" "6" },
         @{ Name = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_TOPIC_DEADLETTER" "code-execution.deadletter.v1"; Partitions = Get-SandboxEnvOrDefault "SANDBOX_KAFKA_DLQ_PARTITIONS" "3" }

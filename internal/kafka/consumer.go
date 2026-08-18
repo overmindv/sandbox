@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -40,10 +41,15 @@ func NewConsumer(cfg config.KafkaConfig) (*KafkaConsumer, error) {
 		queueCapacity = 16
 	}
 
+	groupTopics := []string{cfg.Topics.Requests}
+	if retryTopic := strings.TrimSpace(cfg.Topics.Retry); retryTopic != "" && retryTopic != cfg.Topics.Requests {
+		groupTopics = append(groupTopics, retryTopic)
+	}
+
 	readerConfig := kafkago.ReaderConfig{
 		Brokers:           cfg.Brokers,
 		GroupID:           cfg.GroupID,
-		Topic:             cfg.Topics.Requests,
+		GroupTopics:       groupTopics,
 		QueueCapacity:     queueCapacity,
 		MinBytes:          1,
 		MaxBytes:          10 * 1024 * 1024,

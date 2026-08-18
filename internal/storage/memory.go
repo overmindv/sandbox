@@ -64,7 +64,20 @@ func (s *MemoryRunStore) ReserveAttempt(ctx context.Context, req contracts.RunRe
 			}
 			return AttemptReservation{State: AttemptDuplicateCompleted, Result: cloned}, nil
 		}
-		return AttemptReservation{State: AttemptDuplicateRunning}, nil
+		if existing.Status == AttemptStatusRunning {
+			return AttemptReservation{State: AttemptDuplicateRunning}, nil
+		}
+		existing.Status = AttemptStatusRunning
+		existing.WorkerInstanceID = workerID
+		existing.StartedAt = s.now()
+		existing.CompletedAt = nil
+		existing.LeaseExpiresAt = nil
+		existing.LastErrorClass = ""
+		existing.LastErrorReason = ""
+		existing.LastErrorMessage = ""
+		existing.UpdatedAt = existing.StartedAt
+		s.attempts[req.AttemptID] = existing
+		return AttemptReservation{State: AttemptReserved}, nil
 	}
 
 	now := s.now()
@@ -159,6 +172,51 @@ func (s *MemoryRunStore) CompleteAttempt(ctx context.Context, result contracts.R
 	s.attemptTestResults[result.AttemptID] = cloneAttemptTestResults(AttemptTestResultsFromRunResult(result, now))
 	for _, artifact := range ArtifactsFromRunResult(attempt.RunID, result, now) {
 		s.artifacts[artifact.ArtifactID] = artifact
+	}
+	return nil
+}
+
+func (s *MemoryRunStore) FailAttempt(ctx context.Context, failure AttemptFailure) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	attempt, ok := s.attempts[failure.AttemptID]
+	if !ok {
+		return ErrAttemptNotFound
+	}
+	if attempt.SubmissionID != failure.SubmissionID {
+		return ErrAttemptConflict
+	}
+
+	failedAt := failure.FailedAt.UTC()
+	if failedAt.IsZero() {
+		failedAt = s.now()
+	}
+	status := failure.Status
+	if status == "" {
+		status = AttemptStatusFailedInternal
+	}
+	attempt.Status = status
+	if failure.WorkerInstanceID != "" {
+		attempt.WorkerInstanceID = failure.WorkerInstanceID
+	}
+	attempt.DeliveryAttempts = failure.DeliveryAttempts
+	attempt.LastErrorClass = failure.ErrorClass
+	attempt.LastErrorReason = failure.Reason
+	attempt.LastErrorMessage = failure.Message
+	attempt.CompletedAt = &failedAt
+	attempt.LeaseExpiresAt = nil
+	attempt.UpdatedAt = failedAt
+	s.attempts[failure.AttemptID] = attempt
+
+	if run, ok := s.runs[attempt.RunID]; ok {
+		run.Status = RunStatusRunning
+		run.UpdatedAt = failedAt
+		s.runs[attempt.RunID] = run
 	}
 	return nil
 }

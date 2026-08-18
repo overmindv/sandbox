@@ -100,6 +100,10 @@ type AttemptRecord struct {
 	RequestJSON      json.RawMessage
 	ResultJSON       json.RawMessage
 	WorkerInstanceID string
+	DeliveryAttempts int
+	LastErrorClass   string
+	LastErrorReason  string
+	LastErrorMessage string
 	StartedAt        time.Time
 	CompletedAt      *time.Time
 	LeaseExpiresAt   *time.Time
@@ -183,7 +187,9 @@ type ArtifactRecord struct {
 	AttemptID       string
 	Kind            ArtifactKind
 	StorageProvider ArtifactStorageProvider
+	Bucket          string
 	ObjectKey       string
+	ContentType     string
 	ContentHash     string
 	SizeBytes       int64
 	Truncated       bool
@@ -213,4 +219,16 @@ type OutboxEventRecord struct {
 type OutboxFilter struct {
 	Status OutboxStatus
 	Limit  int
+}
+
+type AttemptFailure struct {
+	AttemptID        string
+	SubmissionID     string
+	WorkerInstanceID string
+	Status           AttemptStatus
+	ErrorClass       string
+	Reason           string
+	Message          string
+	DeliveryAttempts int
+	FailedAt         time.Time
 }

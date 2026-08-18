@@ -55,10 +55,11 @@ type ServerConfig struct {
 }
 
 type FeatureFlags struct {
-	FakeExecutor      bool `yaml:"fake_executor"`
-	GoJudgeExecutor   bool `yaml:"gojudge_executor"`
-	InlineTests       bool `yaml:"inline_tests"`
-	ObjectStorageTest bool `yaml:"object_storage_tests"`
+	FakeExecutor           bool `yaml:"fake_executor"`
+	GoJudgeExecutor        bool `yaml:"gojudge_executor"`
+	InlineTests            bool `yaml:"inline_tests"`
+	ObjectStorageTest      bool `yaml:"object_storage_tests"`
+	ObjectStorageArtifacts bool `yaml:"object_storage_artifacts"`
 }
 
 type KafkaConfig struct {
@@ -68,10 +69,12 @@ type KafkaConfig struct {
 	Topics   KafkaTopics         `yaml:"topics"`
 	Consumer KafkaConsumerConfig `yaml:"consumer"`
 	Producer KafkaProducerConfig `yaml:"producer"`
+	Retry    KafkaRetryConfig    `yaml:"retry"`
 }
 
 type KafkaTopics struct {
 	Requests   string `yaml:"requests"`
+	Retry      string `yaml:"retry"`
 	Events     string `yaml:"events"`
 	Results    string `yaml:"results"`
 	DeadLetter string `yaml:"deadletter"`
@@ -91,6 +94,15 @@ type KafkaProducerConfig struct {
 	Compression      string `yaml:"compression"`
 	LingerMS         int    `yaml:"linger_ms"`
 	RequestTimeoutMS int    `yaml:"request_timeout_ms"`
+}
+
+type KafkaRetryConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	MaxAttempts          int     `yaml:"max_attempts"`
+	InitialBackoffMS     int     `yaml:"initial_backoff_ms"`
+	MaxBackoffMS         int     `yaml:"max_backoff_ms"`
+	BackoffMultiplier    float64 `yaml:"backoff_multiplier"`
+	EarlyRetrySleepCapMS int     `yaml:"early_retry_sleep_cap_ms"`
 }
 
 type SchedulerConfig struct {
@@ -143,17 +155,24 @@ type InlineTestsConfig struct {
 }
 
 type ObjectStorageTestsConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	Provider   string `yaml:"provider"`
-	Bucket     string `yaml:"bucket"`
-	Endpoint   string `yaml:"endpoint"`
-	Region     string `yaml:"region"`
-	CacheTTLMS int    `yaml:"cache_ttl_ms"`
+	Enabled          bool   `yaml:"enabled"`
+	Provider         string `yaml:"provider"`
+	Bucket           string `yaml:"bucket"`
+	Endpoint         string `yaml:"endpoint"`
+	Region           string `yaml:"region"`
+	AccessKeyID      string `yaml:"access_key_id"`
+	SecretAccessKey  string `yaml:"secret_access_key"`
+	KeyPrefix        string `yaml:"key_prefix"`
+	CacheTTLMS       int    `yaml:"cache_ttl_ms"`
+	MaxBytes         int    `yaml:"max_bytes"`
+	RequestTimeoutMS int    `yaml:"request_timeout_ms"`
+	ForcePathStyle   bool   `yaml:"force_path_style"`
 }
 
 type StorageConfig struct {
 	Type      string                 `yaml:"type"`
 	Postgres  PostgresStore          `yaml:"postgres"`
+	Artifacts ArtifactStorageConfig  `yaml:"artifacts"`
 	Retention StorageRetentionConfig `yaml:"retention"`
 }
 
@@ -161,6 +180,22 @@ type PostgresStore struct {
 	DSN                string `yaml:"dsn"`
 	MaxOpenConnections int    `yaml:"max_open_connections"`
 	MaxIdleConnections int    `yaml:"max_idle_connections"`
+}
+
+type ArtifactStorageConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Provider         string `yaml:"provider"`
+	Bucket           string `yaml:"bucket"`
+	Endpoint         string `yaml:"endpoint"`
+	Region           string `yaml:"region"`
+	AccessKeyID      string `yaml:"access_key_id"`
+	SecretAccessKey  string `yaml:"secret_access_key"`
+	RootDir          string `yaml:"root_dir"`
+	KeyPrefix        string `yaml:"key_prefix"`
+	InlineMaxBytes   int    `yaml:"inline_max_bytes"`
+	MaxBytes         int    `yaml:"max_bytes"`
+	RequestTimeoutMS int    `yaml:"request_timeout_ms"`
+	ForcePathStyle   bool   `yaml:"force_path_style"`
 }
 
 type StorageRetentionConfig struct {
@@ -228,10 +263,11 @@ func Default() Config {
 			MetricsAddr: "0.0.0.0:9090",
 		},
 		FeatureFlags: FeatureFlags{
-			FakeExecutor:      true,
-			GoJudgeExecutor:   false,
-			InlineTests:       true,
-			ObjectStorageTest: false,
+			FakeExecutor:           true,
+			GoJudgeExecutor:        false,
+			InlineTests:            true,
+			ObjectStorageTest:      false,
+			ObjectStorageArtifacts: true,
 		},
 		Kafka: KafkaConfig{
 			Brokers:  []string{"localhost:29092"},
@@ -239,9 +275,18 @@ func Default() Config {
 			GroupID:  "sandbox-code-execution-v1",
 			Topics: KafkaTopics{
 				Requests:   "code-execution.requests.v1",
+				Retry:      "code-execution.retry.v1",
 				Events:     "code-execution.events.v1",
 				Results:    "code-execution.results.v1",
 				DeadLetter: "code-execution.deadletter.v1",
+			},
+			Retry: KafkaRetryConfig{
+				Enabled:              true,
+				MaxAttempts:          3,
+				InitialBackoffMS:     500,
+				MaxBackoffMS:         30000,
+				BackoffMultiplier:    2,
+				EarlyRetrySleepCapMS: 5000,
 			},
 		},
 		Scheduler: SchedulerConfig{
@@ -279,11 +324,25 @@ func Default() Config {
 				MaxTotalBytes: 524288,
 			},
 			ObjectStorage: ObjectStorageTestsConfig{
-				Provider: "disabled",
+				Provider:         "disabled",
+				KeyPrefix:        "sandbox-tests",
+				MaxBytes:         1048576,
+				RequestTimeoutMS: 10000,
+				ForcePathStyle:   true,
 			},
 		},
 		Storage: StorageConfig{
 			Type: "memory",
+			Artifacts: ArtifactStorageConfig{
+				Enabled:          true,
+				Provider:         "filesystem",
+				RootDir:          ".sandbox-artifacts",
+				KeyPrefix:        "sandbox-artifacts",
+				InlineMaxBytes:   4096,
+				MaxBytes:         1048576,
+				RequestTimeoutMS: 10000,
+				ForcePathStyle:   true,
+			},
 			Retention: StorageRetentionConfig{
 				CompletedRunsDays:      7,
 				ArtifactsDays:          7,
@@ -386,6 +445,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_KAFKA_TOPIC_REQUESTS"); value != "" {
 		cfg.Kafka.Topics.Requests = value
 	}
+	if value := os.Getenv("SANDBOX_KAFKA_TOPIC_RETRY"); value != "" {
+		cfg.Kafka.Topics.Retry = value
+	}
 	if value := os.Getenv("SANDBOX_KAFKA_TOPIC_EVENTS"); value != "" {
 		cfg.Kafka.Topics.Events = value
 	}
@@ -394,6 +456,24 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("SANDBOX_KAFKA_TOPIC_DEADLETTER"); value != "" {
 		cfg.Kafka.Topics.DeadLetter = value
+	}
+	if err := applyBoolEnv("SANDBOX_KAFKA_RETRY_ENABLED", &cfg.Kafka.Retry.Enabled); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_KAFKA_RETRY_MAX_ATTEMPTS", &cfg.Kafka.Retry.MaxAttempts); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_KAFKA_RETRY_INITIAL_BACKOFF_MS", &cfg.Kafka.Retry.InitialBackoffMS); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_KAFKA_RETRY_MAX_BACKOFF_MS", &cfg.Kafka.Retry.MaxBackoffMS); err != nil {
+		return err
+	}
+	if err := applyFloatEnv("SANDBOX_KAFKA_RETRY_BACKOFF_MULTIPLIER", &cfg.Kafka.Retry.BackoffMultiplier); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS", &cfg.Kafka.Retry.EarlyRetrySleepCapMS); err != nil {
+		return err
 	}
 	if value := os.Getenv("SANDBOX_EXECUTOR_TYPE"); value != "" {
 		cfg.Executor.Type = value
@@ -414,6 +494,9 @@ func applyEnvOverrides(cfg *Config) error {
 		return err
 	}
 	if err := applyBoolEnv("SANDBOX_FEATURE_OBJECT_STORAGE_TESTS", &cfg.FeatureFlags.ObjectStorageTest); err != nil {
+		return err
+	}
+	if err := applyBoolEnv("SANDBOX_FEATURE_OBJECT_STORAGE_ARTIFACTS", &cfg.FeatureFlags.ObjectStorageArtifacts); err != nil {
 		return err
 	}
 	if err := applyIntEnv("SANDBOX_MAX_IN_FLIGHT", &cfg.Scheduler.MaxInFlight); err != nil {
@@ -440,11 +523,68 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_TESTS_REGION"); value != "" {
 		cfg.Tests.ObjectStorage.Region = value
 	}
+	if value := os.Getenv("SANDBOX_TESTS_ACCESS_KEY_ID"); value != "" {
+		cfg.Tests.ObjectStorage.AccessKeyID = value
+	}
+	if value := os.Getenv("SANDBOX_TESTS_SECRET_ACCESS_KEY"); value != "" {
+		cfg.Tests.ObjectStorage.SecretAccessKey = value
+	}
+	if value := os.Getenv("SANDBOX_TESTS_KEY_PREFIX"); value != "" {
+		cfg.Tests.ObjectStorage.KeyPrefix = value
+	}
+	if err := applyIntEnv("SANDBOX_TESTS_OBJECT_MAX_BYTES", &cfg.Tests.ObjectStorage.MaxBytes); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_TESTS_REQUEST_TIMEOUT_MS", &cfg.Tests.ObjectStorage.RequestTimeoutMS); err != nil {
+		return err
+	}
+	if err := applyBoolEnv("SANDBOX_TESTS_FORCE_PATH_STYLE", &cfg.Tests.ObjectStorage.ForcePathStyle); err != nil {
+		return err
+	}
 	if value := os.Getenv("SANDBOX_STORAGE_TYPE"); value != "" {
 		cfg.Storage.Type = value
 	}
 	if value := os.Getenv("SANDBOX_POSTGRES_DSN"); value != "" {
 		cfg.Storage.Postgres.DSN = value
+	}
+	if err := applyBoolEnv("SANDBOX_ARTIFACTS_ENABLED", &cfg.Storage.Artifacts.Enabled); err != nil {
+		return err
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_PROVIDER"); value != "" {
+		cfg.Storage.Artifacts.Provider = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_BUCKET"); value != "" {
+		cfg.Storage.Artifacts.Bucket = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_ENDPOINT"); value != "" {
+		cfg.Storage.Artifacts.Endpoint = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_REGION"); value != "" {
+		cfg.Storage.Artifacts.Region = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_ACCESS_KEY_ID"); value != "" {
+		cfg.Storage.Artifacts.AccessKeyID = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_SECRET_ACCESS_KEY"); value != "" {
+		cfg.Storage.Artifacts.SecretAccessKey = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_ROOT_DIR"); value != "" {
+		cfg.Storage.Artifacts.RootDir = value
+	}
+	if value := os.Getenv("SANDBOX_ARTIFACTS_KEY_PREFIX"); value != "" {
+		cfg.Storage.Artifacts.KeyPrefix = value
+	}
+	if err := applyIntEnv("SANDBOX_ARTIFACTS_INLINE_MAX_BYTES", &cfg.Storage.Artifacts.InlineMaxBytes); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_ARTIFACTS_MAX_BYTES", &cfg.Storage.Artifacts.MaxBytes); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_ARTIFACTS_REQUEST_TIMEOUT_MS", &cfg.Storage.Artifacts.RequestTimeoutMS); err != nil {
+		return err
+	}
+	if err := applyBoolEnv("SANDBOX_ARTIFACTS_FORCE_PATH_STYLE", &cfg.Storage.Artifacts.ForcePathStyle); err != nil {
+		return err
 	}
 	if err := applyIntEnv("SANDBOX_RETENTION_COMPLETED_RUNS_DAYS", &cfg.Storage.Retention.CompletedRunsDays); err != nil {
 		return err
@@ -541,6 +681,33 @@ func (cfg Config) Validate() error {
 	if cfg.Executor.ClientTimeoutMS <= 0 {
 		errs = append(errs, "executor.client_timeout_ms must be positive")
 	}
+	if cfg.Kafka.Topics.Requests == "" {
+		errs = append(errs, "kafka.topics.requests is required")
+	}
+	if cfg.Kafka.Topics.Retry == "" {
+		errs = append(errs, "kafka.topics.retry is required")
+	}
+	if cfg.Kafka.Topics.Results == "" {
+		errs = append(errs, "kafka.topics.results is required")
+	}
+	if cfg.Kafka.Topics.DeadLetter == "" {
+		errs = append(errs, "kafka.topics.deadletter is required")
+	}
+	if cfg.Kafka.Retry.MaxAttempts <= 0 {
+		errs = append(errs, "kafka.retry.max_attempts must be positive")
+	}
+	if cfg.Kafka.Retry.InitialBackoffMS < 0 {
+		errs = append(errs, "kafka.retry.initial_backoff_ms must not be negative")
+	}
+	if cfg.Kafka.Retry.MaxBackoffMS < 0 {
+		errs = append(errs, "kafka.retry.max_backoff_ms must not be negative")
+	}
+	if cfg.Kafka.Retry.BackoffMultiplier < 1 {
+		errs = append(errs, "kafka.retry.backoff_multiplier must be at least 1")
+	}
+	if cfg.Kafka.Retry.EarlyRetrySleepCapMS < 0 {
+		errs = append(errs, "kafka.retry.early_retry_sleep_cap_ms must not be negative")
+	}
 
 	switch cfg.Executor.Type {
 	case "fake":
@@ -585,6 +752,46 @@ func (cfg Config) Validate() error {
 	if cfg.Storage.Retention.WorkerHeartbeatStaleMS < 0 {
 		errs = append(errs, "storage.retention.worker_heartbeat_stale_ms must not be negative")
 	}
+	if cfg.Storage.Artifacts.Enabled {
+		if !cfg.FeatureFlags.ObjectStorageArtifacts {
+			errs = append(errs, "storage.artifacts.enabled requires feature_flags.object_storage_artifacts=true")
+		}
+		switch cfg.Storage.Artifacts.Provider {
+		case "filesystem":
+			if strings.TrimSpace(cfg.Storage.Artifacts.RootDir) == "" {
+				errs = append(errs, "storage.artifacts.root_dir is required when artifact provider is filesystem")
+			}
+		case "s3":
+			if strings.TrimSpace(cfg.Storage.Artifacts.Bucket) == "" {
+				errs = append(errs, "storage.artifacts.bucket is required when artifact provider is s3")
+			}
+			if strings.TrimSpace(cfg.Storage.Artifacts.Region) == "" {
+				errs = append(errs, "storage.artifacts.region is required when artifact provider is s3")
+			}
+			if strings.TrimSpace(cfg.Storage.Artifacts.AccessKeyID) == "" {
+				errs = append(errs, "storage.artifacts.access_key_id is required when artifact provider is s3")
+			}
+			if strings.TrimSpace(cfg.Storage.Artifacts.SecretAccessKey) == "" {
+				errs = append(errs, "storage.artifacts.secret_access_key is required when artifact provider is s3")
+			}
+		default:
+			errs = append(errs, "storage.artifacts.provider must be filesystem or s3 when artifacts are enabled")
+		}
+	} else if cfg.Storage.Artifacts.Provider != "" && cfg.Storage.Artifacts.Provider != "disabled" && cfg.Storage.Artifacts.Provider != "filesystem" && cfg.Storage.Artifacts.Provider != "s3" {
+		errs = append(errs, "storage.artifacts.provider must be disabled, filesystem, or s3")
+	}
+	if cfg.Storage.Artifacts.InlineMaxBytes < 0 {
+		errs = append(errs, "storage.artifacts.inline_max_bytes must not be negative")
+	}
+	if cfg.Storage.Artifacts.MaxBytes < 0 {
+		errs = append(errs, "storage.artifacts.max_bytes must not be negative")
+	}
+	if cfg.Storage.Artifacts.MaxBytes > 0 && cfg.Storage.Artifacts.InlineMaxBytes > cfg.Storage.Artifacts.MaxBytes {
+		errs = append(errs, "storage.artifacts.inline_max_bytes must not exceed storage.artifacts.max_bytes")
+	}
+	if cfg.Storage.Artifacts.RequestTimeoutMS < 0 {
+		errs = append(errs, "storage.artifacts.request_timeout_ms must not be negative")
+	}
 
 	if cfg.Tests.Inline.Enabled && !cfg.FeatureFlags.InlineTests {
 		errs = append(errs, "tests.inline.enabled requires feature_flags.inline_tests=true")
@@ -596,9 +803,30 @@ func (cfg Config) Validate() error {
 		if cfg.Tests.ObjectStorage.Provider == "" || cfg.Tests.ObjectStorage.Provider == "disabled" {
 			errs = append(errs, "tests.object_storage.provider is required when object storage tests are enabled")
 		}
+		if cfg.Tests.ObjectStorage.Provider != "s3" {
+			errs = append(errs, "tests.object_storage.provider must be s3 when object storage tests are enabled")
+		}
 		if cfg.Tests.ObjectStorage.Bucket == "" {
 			errs = append(errs, "tests.object_storage.bucket is required when object storage tests are enabled")
 		}
+		if cfg.Tests.ObjectStorage.Region == "" {
+			errs = append(errs, "tests.object_storage.region is required when object storage tests are enabled")
+		}
+		if cfg.Tests.ObjectStorage.AccessKeyID == "" {
+			errs = append(errs, "tests.object_storage.access_key_id is required when object storage tests are enabled")
+		}
+		if cfg.Tests.ObjectStorage.SecretAccessKey == "" {
+			errs = append(errs, "tests.object_storage.secret_access_key is required when object storage tests are enabled")
+		}
+	}
+	if cfg.Tests.ObjectStorage.CacheTTLMS < 0 {
+		errs = append(errs, "tests.object_storage.cache_ttl_ms must not be negative")
+	}
+	if cfg.Tests.ObjectStorage.MaxBytes < 0 {
+		errs = append(errs, "tests.object_storage.max_bytes must not be negative")
+	}
+	if cfg.Tests.ObjectStorage.RequestTimeoutMS < 0 {
+		errs = append(errs, "tests.object_storage.request_timeout_ms must not be negative")
 	}
 
 	if cfg.Observability.LogFormat != "json" && cfg.Observability.LogFormat != "console" {
@@ -639,6 +867,19 @@ func applyIntEnv(name string, target *int) error {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fmt.Errorf("%s must be an integer: %w", name, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func applyFloatEnv(name string, target *float64) error {
+	value := os.Getenv(name)
+	if value == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fmt.Errorf("%s must be a number: %w", name, err)
 	}
 	*target = parsed
 	return nil

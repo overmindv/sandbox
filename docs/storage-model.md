@@ -21,8 +21,8 @@ do not change the business result.
 - `attempt_test_results` stores individual test outcomes extracted from
   `RunResult`.
 - `artifacts` stores metadata for stdout, stderr, pytest reports, compile logs,
-  and archives. Large content belongs in object storage; until that batch lands,
-  stdout/stderr remain in `result_json` and artifact rows carry metadata.
+  and archives. Large stdout/stderr content is written to object storage and
+  `result_json` keeps inline previews plus artifact references.
 - `outbox_events` is the durable event handoff for result, retry, and DLQ
   publication.
 
@@ -48,10 +48,15 @@ Postgres stores:
 
 Object storage stores:
 
-- large stdout/stderr once object storage artifacts are enabled;
+- large stdout/stderr once `storage.artifacts.enabled=true`;
 - pytest JSON reports;
 - compile logs above inline limits;
 - copied-out archives and debugging bundles.
+
+Artifact object keys are deterministic by run, attempt, and artifact kind:
+`<key_prefix>/runs/<run_id>/attempts/<attempt_id>/<kind>.txt`. This makes retry
+after an artifact upload safe: the same attempt rewrites the same object with
+the same content hash.
 
 ## Retention
 

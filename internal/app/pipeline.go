@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"overmindv/sandbox/internal/artifacts"
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
@@ -18,6 +19,7 @@ import (
 	"overmindv/sandbox/internal/scheduler"
 	"overmindv/sandbox/internal/security"
 	"overmindv/sandbox/internal/storage"
+	"overmindv/sandbox/internal/testsources"
 )
 
 type WorkerDeps struct {
@@ -27,6 +29,8 @@ type WorkerDeps struct {
 	Languages *languages.Registry
 	Metrics   *observability.SchedulerMetrics
 	RunStore  storage.RunStore
+	Artifacts *artifacts.Manager
+	Tests     testsources.Provider
 }
 
 type requestExecutor struct {
@@ -49,6 +53,9 @@ type requestPipeline struct {
 	workerID   string
 	security   security.Policy
 	store      storage.RunStore
+	artifacts  *artifacts.Manager
+	tests      testsources.Provider
+	metrics    *observability.SchedulerMetrics
 	logger     *observability.Logger
 }
 
@@ -85,7 +92,12 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		}
 	}
 
-	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor}, deps.Metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
+	metrics := deps.Metrics
+	if metrics == nil {
+		metrics = observability.NewSchedulerMetrics()
+	}
+
+	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor}, metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create scheduler dispatcher: %w", err)
 	}
@@ -106,6 +118,21 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		return nil, nil, nil, fmt.Errorf("register worker inventory: %w", err)
 	}
 
+	artifactManager := deps.Artifacts
+	if artifactManager == nil {
+		artifactManager, err = artifacts.NewManagerFromConfig(cfg.Storage.Artifacts)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("create artifact manager: %w", err)
+		}
+	}
+	testSources := deps.Tests
+	if testSources == nil {
+		testSources, err = testsources.NewProviderFromConfig(cfg.Tests)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("create test source provider: %w", err)
+		}
+	}
+
 	topics := kafka.TopicNamesFromConfig(cfg.Kafka.Topics)
 	securityPolicy := security.PolicyFromConfigAndLimits(cfg, limitsConfig)
 	handler := requestPipeline{
@@ -116,6 +143,9 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		workerID:   cfg.App.WorkerID,
 		security:   securityPolicy,
 		store:      runStore,
+		artifacts:  artifactManager,
+		tests:      testSources,
+		metrics:    metrics,
 		logger:     logger,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
@@ -124,6 +154,9 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 	}
 	processor.SecurityGuard = security.NewGuard(securityPolicy)
 	processor.ValidationOptions = security.ValidationOptionsFromLimits(limitsConfig)
+	processor.RetryPolicy = kafka.RetryPolicyFromConfig(cfg.Kafka.Retry)
+	processor.RunStore = runStore
+	processor.Metrics = metrics
 
 	return processor, dispatcher, runStore, nil
 }
@@ -146,7 +179,7 @@ func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
 func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Message, req contracts.RunRequest) error {
 	reservation, err := p.store.ReserveAttempt(ctx, req, p.workerID)
 	if err != nil {
-		return err
+		return classifyStorageReservationError(err)
 	}
 	switch reservation.State {
 	case storage.AttemptDuplicateCompleted:
@@ -154,10 +187,21 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		return p.publishResult(ctx, reservation.Result)
 	case storage.AttemptDuplicateRunning:
 		p.logger.Warn(ctx, "duplicate attempt is already running", "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
-		return storage.ErrAttemptInProgress
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "attempt_in_progress", storage.ErrAttemptInProgress, false)
 	case storage.AttemptReserved:
 	default:
 		return fmt.Errorf("unknown attempt reservation state %q", reservation.State)
+	}
+
+	if p.tests != nil {
+		resolved, err := p.tests.Resolve(ctx, req)
+		if err != nil {
+			return p.handleTestSourceError(ctx, req, err)
+		}
+		req = resolved
+		if err := security.NewGuard(p.security).ValidateRunRequest(req); err != nil {
+			return p.completeInvalidRequest(ctx, req, "invalid_request", err)
+		}
 	}
 
 	command, err := p.languages.BuildCommand(ctx, req)
@@ -191,11 +235,14 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 	if errors.Is(err, scheduler.ErrJobTimeout) {
 		execResult = execution.TimeoutResult(err.Error())
 	} else if err != nil {
-		execResult = execution.InternalErrorResult(err.Error(), true)
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "execution_infra_error", err, true)
 	} else if output, ok := jobResult.Output.(execution.ExecutionResult); ok {
 		execResult = output
 	} else {
-		execResult = execution.InternalErrorResult("scheduler returned unexpected execution output", true)
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInternal, "unexpected_execution_output", errors.New("scheduler returned unexpected execution output"), true)
+	}
+	if execResult.Error != nil && execResult.Error.Retryable {
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, execResult.Error.Code, errors.New(execResult.Error.Message), true)
 	}
 	execResult = applyOutputPolicy(execResult, p.security)
 
@@ -206,24 +253,74 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 	return p.completeAndPublish(ctx, result)
 }
 
-func (p requestPipeline) completeAndPublish(ctx context.Context, result contracts.RunResult) error {
-	if err := p.store.CompleteAttempt(ctx, result); err != nil {
+func (p requestPipeline) handleTestSourceError(ctx context.Context, req contracts.RunRequest, err error) error {
+	var sourceErr testsources.SourceError
+	if errors.As(err, &sourceErr) {
+		if sourceErr.Retryable {
+			return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, sourceErr.Reason, err, true)
+		}
+		return p.completeInvalidRequest(ctx, req, sourceErr.Reason, err)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "test_source_load_failed", err, true)
+}
+
+func (p requestPipeline) completeInvalidRequest(ctx context.Context, req contracts.RunRequest, code string, err error) error {
+	result := execution.RunResultFromExecution(req, execution.InternalErrorResult(err.Error(), false), execution.ResultTimingInput{}, p.workerID)
+	result.Status = contracts.StatusInvalidRequest
+	if result.Error != nil {
+		result.Error.Code = code
+	}
+	return p.completeAndPublish(ctx, result)
+}
+
+func (p requestPipeline) completeAndPublish(ctx context.Context, result contracts.RunResult) error {
 	attempt, ok, err := p.store.GetAttempt(ctx, result.AttemptID)
 	if err != nil {
-		return err
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "storage_get_attempt_failed", err, false)
+	}
+	if ok && p.artifacts != nil {
+		processed, err := p.artifacts.ProcessResult(ctx, attempt.RunID, result)
+		if err != nil {
+			if p.metrics != nil {
+				p.metrics.IncArtifactFailure("result_logs")
+			}
+			return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "artifact_store_failed", err, true)
+		}
+		p.recordArtifactMetrics(result.Logs, processed.Logs)
+		result = processed
+	}
+
+	if err := p.store.CompleteAttempt(ctx, result); err != nil {
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "storage_complete_failed", err, true)
 	}
 	if ok {
 		event, err := storage.ResultOutboxEvent(attempt.RunID, result, p.topics.Results, time.Now().UTC())
 		if err != nil {
-			return err
+			return kafka.NewProcessingError(kafka.ErrorClassInternal, "outbox_event_build_failed", err, false)
 		}
 		if _, err := p.store.AppendOutboxEvent(ctx, event); err != nil {
-			return err
+			return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "outbox_append_failed", err, false)
 		}
 	}
-	return p.publishResult(ctx, result)
+	if err := p.publishResult(ctx, result); err != nil {
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "result_publish_failed", err, false)
+	}
+	return nil
+}
+
+func (p requestPipeline) recordArtifactMetrics(before contracts.ResultLogs, after contracts.ResultLogs) {
+	if p.metrics == nil {
+		return
+	}
+	if before.StdoutArtifact == nil && after.StdoutArtifact != nil {
+		p.metrics.IncArtifactStored(after.StdoutArtifact.Kind, after.StdoutArtifact.SizeBytes)
+	}
+	if before.StderrArtifact == nil && after.StderrArtifact != nil {
+		p.metrics.IncArtifactStored(after.StderrArtifact.Kind, after.StderrArtifact.SizeBytes)
+	}
 }
 
 func (p requestPipeline) publishResult(ctx context.Context, result contracts.RunResult) error {
@@ -240,4 +337,15 @@ func applyOutputPolicy(result execution.ExecutionResult, policy security.Policy)
 	result.Stderr = stderr
 	result.LogsTruncated = result.LogsTruncated || truncated
 	return result
+}
+
+func classifyStorageReservationError(err error) error {
+	switch {
+	case errors.Is(err, storage.ErrAttemptInProgress):
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "attempt_in_progress", err, false)
+	case errors.Is(err, storage.ErrAttemptConflict):
+		return kafka.NewProcessingError(kafka.ErrorClassUser, "attempt_conflict", err, false)
+	default:
+		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "storage_reserve_failed", err, false)
+	}
 }

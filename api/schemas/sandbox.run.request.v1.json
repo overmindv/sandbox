@@ -188,12 +188,14 @@
         "suite_id": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 128
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
         },
         "version": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 64
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
         },
         "checksum_sha256": {
           "type": "string",

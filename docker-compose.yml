@@ -43,6 +43,7 @@ services:
     command:
       - |
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_REQUESTS:-code-execution.requests.v1}" --partitions "${SANDBOX_KAFKA_REQUEST_PARTITIONS:-6}" --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_RETRY:-code-execution.retry.v1}" --partitions "${SANDBOX_KAFKA_RETRY_PARTITIONS:-6}" --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_RESULTS:-code-execution.results.v1}" --partitions "${SANDBOX_KAFKA_RESULT_PARTITIONS:-6}" --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_EVENTS:-code-execution.events.v1}" --partitions "${SANDBOX_KAFKA_EVENT_PARTITIONS:-6}" --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "${SANDBOX_KAFKA_TOPIC_DEADLETTER:-code-execution.deadletter.v1}" --partitions "${SANDBOX_KAFKA_DLQ_PARTITIONS:-3}" --replication-factor 1
@@ -93,9 +94,16 @@ services:
       SANDBOX_KAFKA_CLIENT_ID: sandbox-worker-local
       SANDBOX_KAFKA_GROUP_ID: sandbox-code-execution-v1
       SANDBOX_KAFKA_TOPIC_REQUESTS: ${SANDBOX_KAFKA_TOPIC_REQUESTS:-code-execution.requests.v1}
+      SANDBOX_KAFKA_TOPIC_RETRY: ${SANDBOX_KAFKA_TOPIC_RETRY:-code-execution.retry.v1}
       SANDBOX_KAFKA_TOPIC_EVENTS: ${SANDBOX_KAFKA_TOPIC_EVENTS:-code-execution.events.v1}
       SANDBOX_KAFKA_TOPIC_RESULTS: ${SANDBOX_KAFKA_TOPIC_RESULTS:-code-execution.results.v1}
       SANDBOX_KAFKA_TOPIC_DEADLETTER: ${SANDBOX_KAFKA_TOPIC_DEADLETTER:-code-execution.deadletter.v1}
+      SANDBOX_KAFKA_RETRY_ENABLED: ${SANDBOX_KAFKA_RETRY_ENABLED:-true}
+      SANDBOX_KAFKA_RETRY_MAX_ATTEMPTS: ${SANDBOX_KAFKA_RETRY_MAX_ATTEMPTS:-3}
+      SANDBOX_KAFKA_RETRY_INITIAL_BACKOFF_MS: ${SANDBOX_KAFKA_RETRY_INITIAL_BACKOFF_MS:-500}
+      SANDBOX_KAFKA_RETRY_MAX_BACKOFF_MS: ${SANDBOX_KAFKA_RETRY_MAX_BACKOFF_MS:-30000}
+      SANDBOX_KAFKA_RETRY_BACKOFF_MULTIPLIER: ${SANDBOX_KAFKA_RETRY_BACKOFF_MULTIPLIER:-2}
+      SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS: ${SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS:-5000}
       SANDBOX_EXECUTOR_TYPE: gojudge
       SANDBOX_GOJUDGE_BASE_URL: http://gojudge:5050
       SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS: ${SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS:-10000}
@@ -103,11 +111,37 @@ services:
       SANDBOX_FEATURE_GOJUDGE_EXECUTOR: "true"
       SANDBOX_FEATURE_INLINE_TESTS: "true"
       SANDBOX_FEATURE_OBJECT_STORAGE_TESTS: "false"
+      SANDBOX_FEATURE_OBJECT_STORAGE_ARTIFACTS: ${SANDBOX_FEATURE_OBJECT_STORAGE_ARTIFACTS:-true}
+      SANDBOX_TESTS_PROVIDER: ${SANDBOX_TESTS_PROVIDER:-disabled}
+      SANDBOX_TESTS_BUCKET: ${SANDBOX_TESTS_BUCKET:-sandbox-tests}
+      SANDBOX_TESTS_ENDPOINT: ${SANDBOX_TESTS_ENDPOINT:-}
+      SANDBOX_TESTS_REGION: ${SANDBOX_TESTS_REGION:-}
+      SANDBOX_TESTS_ACCESS_KEY_ID: ${SANDBOX_TESTS_ACCESS_KEY_ID:-}
+      SANDBOX_TESTS_SECRET_ACCESS_KEY: ${SANDBOX_TESTS_SECRET_ACCESS_KEY:-}
+      SANDBOX_TESTS_KEY_PREFIX: ${SANDBOX_TESTS_KEY_PREFIX:-sandbox-tests}
+      SANDBOX_TESTS_OBJECT_MAX_BYTES: ${SANDBOX_TESTS_OBJECT_MAX_BYTES:-1048576}
+      SANDBOX_TESTS_REQUEST_TIMEOUT_MS: ${SANDBOX_TESTS_REQUEST_TIMEOUT_MS:-10000}
+      SANDBOX_TESTS_FORCE_PATH_STYLE: ${SANDBOX_TESTS_FORCE_PATH_STYLE:-true}
+      SANDBOX_ARTIFACTS_ENABLED: ${SANDBOX_ARTIFACTS_ENABLED:-true}
+      SANDBOX_ARTIFACTS_PROVIDER: ${SANDBOX_ARTIFACTS_PROVIDER:-filesystem}
+      SANDBOX_ARTIFACTS_BUCKET: ${SANDBOX_ARTIFACTS_BUCKET:-sandbox-artifacts}
+      SANDBOX_ARTIFACTS_ENDPOINT: ${SANDBOX_ARTIFACTS_ENDPOINT:-}
+      SANDBOX_ARTIFACTS_REGION: ${SANDBOX_ARTIFACTS_REGION:-}
+      SANDBOX_ARTIFACTS_ACCESS_KEY_ID: ${SANDBOX_ARTIFACTS_ACCESS_KEY_ID:-}
+      SANDBOX_ARTIFACTS_SECRET_ACCESS_KEY: ${SANDBOX_ARTIFACTS_SECRET_ACCESS_KEY:-}
+      SANDBOX_ARTIFACTS_ROOT_DIR: ${SANDBOX_ARTIFACTS_ROOT_DIR:-/var/lib/sandbox/artifacts}
+      SANDBOX_ARTIFACTS_KEY_PREFIX: ${SANDBOX_ARTIFACTS_KEY_PREFIX:-sandbox-artifacts/local}
+      SANDBOX_ARTIFACTS_INLINE_MAX_BYTES: ${SANDBOX_ARTIFACTS_INLINE_MAX_BYTES:-4096}
+      SANDBOX_ARTIFACTS_MAX_BYTES: ${SANDBOX_ARTIFACTS_MAX_BYTES:-1048576}
+      SANDBOX_ARTIFACTS_REQUEST_TIMEOUT_MS: ${SANDBOX_ARTIFACTS_REQUEST_TIMEOUT_MS:-10000}
+      SANDBOX_ARTIFACTS_FORCE_PATH_STYLE: ${SANDBOX_ARTIFACTS_FORCE_PATH_STYLE:-true}
       SANDBOX_LOG_LEVEL: ${SANDBOX_LOG_LEVEL:-debug}
       SANDBOX_LOG_FORMAT: ${SANDBOX_LOG_FORMAT:-console}
       SANDBOX_METRICS_ENABLED: "true"
       SANDBOX_TRACING_ENABLED: "false"
       SANDBOX_AUDIT_ENABLED: "true"
+    volumes:
+      - worker-artifacts:/var/lib/sandbox/artifacts
     ports:
       - "${SANDBOX_WORKER_HEALTH_PORT:-8080}:8080"
       - "${SANDBOX_WORKER_METRICS_PORT:-9090}:9090"
@@ -117,6 +151,46 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+    networks:
+      - sandbox
+
+  minio:
+    image: ${SANDBOX_MINIO_IMAGE:-minio/minio:latest}
+    container_name: sandbox-minio
+    profiles:
+      - object-storage
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${SANDBOX_MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${SANDBOX_MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${SANDBOX_MINIO_API_PORT:-9000}:9000"
+      - "${SANDBOX_MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - sandbox
+
+  minio-create-bucket:
+    image: ${SANDBOX_MINIO_CLIENT_IMAGE:-minio/mc:latest}
+    container_name: sandbox-minio-create-bucket
+    profiles:
+      - object-storage
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set sandbox-minio http://minio:9000 "${SANDBOX_MINIO_ROOT_USER:-minioadmin}" "${SANDBOX_MINIO_ROOT_PASSWORD:-minioadmin}"
+        mc mb --ignore-existing "sandbox-minio/${SANDBOX_ARTIFACTS_BUCKET:-sandbox-artifacts}"
+        mc mb --ignore-existing "sandbox-minio/${SANDBOX_TESTS_BUCKET:-sandbox-tests}"
     networks:
       - sandbox
 
@@ -161,3 +235,5 @@ networks:
 volumes:
   kafka-data:
   prometheus-data:
+  worker-artifacts:
+  minio-data:

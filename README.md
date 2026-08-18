@@ -51,12 +51,19 @@ Copy-Item .env.example .env.local
 .\scripts\dev-up.ps1 -WithPrometheus
 ```
 
+With MinIO object storage:
+
+```powershell
+.\scripts\dev-up.ps1 -WithObjectStorage
+```
+
 Через Make:
 
 ```powershell
 make dev-up
 make dev-up-ui
 make dev-up-observability
+make dev-up-object-storage
 ```
 
 ### Topics
@@ -70,6 +77,7 @@ Compose запускает `kafka-topics` один раз при старте. �
 Создаются:
 
 - `code-execution.requests.v1`
+- `code-execution.retry.v1`
 - `code-execution.results.v1`
 - `code-execution.events.v1`
 - `code-execution.deadletter.v1`

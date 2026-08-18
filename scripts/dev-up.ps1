@@ -1,6 +1,7 @@
 param(
     [switch]$WithUI,
     [switch]$WithPrometheus,
+    [switch]$WithObjectStorage,
     [switch]$NoBuild
 )
 
@@ -19,6 +20,9 @@ try {
     }
     if ($WithPrometheus) {
         $composeArgs += @("--profile", "observability")
+    }
+    if ($WithObjectStorage) {
+        $composeArgs += @("--profile", "object-storage")
     }
 
     $upArgs = $composeArgs + @("up", "-d")
@@ -46,6 +50,12 @@ try {
     if ($WithPrometheus) {
         $promPort = Get-SandboxEnvOrDefault "SANDBOX_PROMETHEUS_PORT" "9091"
         Write-Host "Prometheus:      http://localhost:$promPort"
+    }
+    if ($WithObjectStorage) {
+        $minioPort = Get-SandboxEnvOrDefault "SANDBOX_MINIO_API_PORT" "9000"
+        $minioConsolePort = Get-SandboxEnvOrDefault "SANDBOX_MINIO_CONSOLE_PORT" "9001"
+        Write-Host "MinIO API:       http://localhost:$minioPort"
+        Write-Host "MinIO Console:   http://localhost:$minioConsolePort"
     }
 } finally {
     Pop-Location

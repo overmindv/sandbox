@@ -13,6 +13,14 @@ type SchedulerMetrics struct {
 	started            map[string]int64
 	completed          map[string]int64
 	timedOut           map[string]int64
+	retriesScheduled   map[string]int64
+	retriesDelayed     map[string]int64
+	retriesExhausted   map[string]int64
+	dlqPublished       map[string]int64
+	errorResults       map[string]int64
+	artifactsStored    map[string]int64
+	artifactBytes      map[string]int64
+	artifactFailures   map[string]int64
 }
 
 type SchedulerMetricsSnapshot struct {
@@ -25,6 +33,14 @@ type SchedulerMetricsSnapshot struct {
 	Started            map[string]int64
 	Completed          map[string]int64
 	TimedOut           map[string]int64
+	RetriesScheduled   map[string]int64
+	RetriesDelayed     map[string]int64
+	RetriesExhausted   map[string]int64
+	DLQPublished       map[string]int64
+	ErrorResults       map[string]int64
+	ArtifactsStored    map[string]int64
+	ArtifactBytes      map[string]int64
+	ArtifactFailures   map[string]int64
 }
 
 func NewSchedulerMetrics() *SchedulerMetrics {
@@ -35,6 +51,14 @@ func NewSchedulerMetrics() *SchedulerMetrics {
 		started:            make(map[string]int64),
 		completed:          make(map[string]int64),
 		timedOut:           make(map[string]int64),
+		retriesScheduled:   make(map[string]int64),
+		retriesDelayed:     make(map[string]int64),
+		retriesExhausted:   make(map[string]int64),
+		dlqPublished:       make(map[string]int64),
+		errorResults:       make(map[string]int64),
+		artifactsStored:    make(map[string]int64),
+		artifactBytes:      make(map[string]int64),
+		artifactFailures:   make(map[string]int64),
 	}
 }
 
@@ -93,6 +117,64 @@ func (m *SchedulerMetrics) IncTimedOut(language string) {
 	m.inc(m.timedOut, language)
 }
 
+func (m *SchedulerMetrics) IncRetryScheduled(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.retriesScheduled, reason)
+}
+
+func (m *SchedulerMetrics) IncRetryDelayed(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.retriesDelayed, reason)
+}
+
+func (m *SchedulerMetrics) IncRetryExhausted(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.retriesExhausted, reason)
+}
+
+func (m *SchedulerMetrics) IncDLQPublished(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.dlqPublished, reason)
+}
+
+func (m *SchedulerMetrics) IncErrorResult(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.errorResults, reason)
+}
+
+func (m *SchedulerMetrics) IncArtifactStored(kind string, bytes int64) {
+	if m == nil {
+		return
+	}
+	if bytes < 0 {
+		bytes = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if kind == "" {
+		kind = "unknown"
+	}
+	m.artifactsStored[kind]++
+	m.artifactBytes[kind] += bytes
+}
+
+func (m *SchedulerMetrics) IncArtifactFailure(reason string) {
+	if m == nil {
+		return
+	}
+	m.inc(m.artifactFailures, reason)
+}
+
 func (m *SchedulerMetrics) Snapshot() SchedulerMetricsSnapshot {
 	if m == nil {
 		return SchedulerMetricsSnapshot{}
@@ -109,6 +191,14 @@ func (m *SchedulerMetrics) Snapshot() SchedulerMetricsSnapshot {
 		Started:            cloneInt64Map(m.started),
 		Completed:          cloneInt64Map(m.completed),
 		TimedOut:           cloneInt64Map(m.timedOut),
+		RetriesScheduled:   cloneInt64Map(m.retriesScheduled),
+		RetriesDelayed:     cloneInt64Map(m.retriesDelayed),
+		RetriesExhausted:   cloneInt64Map(m.retriesExhausted),
+		DLQPublished:       cloneInt64Map(m.dlqPublished),
+		ErrorResults:       cloneInt64Map(m.errorResults),
+		ArtifactsStored:    cloneInt64Map(m.artifactsStored),
+		ArtifactBytes:      cloneInt64Map(m.artifactBytes),
+		ArtifactFailures:   cloneInt64Map(m.artifactFailures),
 	}
 }
 

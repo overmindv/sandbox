@@ -9,6 +9,7 @@ Canonical topic names come from `../infra`.
 | Topic | Direction | Purpose |
 | --- | --- | --- |
 | `code-execution.requests.v1` | consume | Code execution requests. Created by infra. |
+| `code-execution.retry.v1` | consume/produce | Bounded retry requests with retry headers and backoff. Created by infra. |
 | `code-execution.results.v1` | produce | Final execution result. Created by infra. |
 | `code-execution.events.v1` | produce | Optional lifecycle events for UI, audit, and observability. Sandbox extension; infra provisioning is still required before production use. |
 | `code-execution.deadletter.v1` | produce | Optional messages that cannot be processed safely. Sandbox extension; infra provisioning is still required before production use. |
@@ -55,9 +56,39 @@ The request contains:
 
 The sandbox must reject unsafe paths before creating files. Absolute paths, Windows drive paths, and `..` segments are invalid.
 
+For `tests.source=object_storage`, the request carries `suite_id`, optional
+`version`, and optional `checksum_sha256` for the suite manifest object. The
+worker reads:
+
+`<tests.object_storage.key_prefix>/test-suites/<suite_id>/<version-or-latest>.json`
+
+The suite manifest uses `schema_version=sandbox.testsuite.v1` and contains
+`suite_id`, optional `version`, `mode`, optional `entrypoint`, and base64 test
+`files`. The resolved files go through the same file/path/security validation as
+inline tests.
+
 ## Result
 
 The result is emitted exactly once from the business point of view, but the transport is at-least-once. Downstream services must use `attempt_id` for deduplication.
+
+`logs.stdout` and `logs.stderr` are always safe inline strings. When a stream is
+larger than the configured inline threshold, the inline field becomes a preview
+and `logs.stdout_artifact` or `logs.stderr_artifact` points to the full stored
+artifact. `logs.inline_truncated=true` means the Kafka payload contains a
+preview. `logs.truncated=true` means the sandbox or artifact policy actually
+discarded bytes.
+
+Artifact references contain:
+
+- deterministic artifact id;
+- artifact kind;
+- storage provider;
+- optional bucket;
+- object key;
+- content type;
+- SHA-256 of stored bytes;
+- stored size in bytes;
+- truncated flag for the stored object.
 
 Final statuses:
 
@@ -91,6 +122,24 @@ Event types:
 
 The final state is always represented by a result message. Consumers must not infer final outcome from events alone.
 
+## Retries
+
+Validation and user errors are deterministic and become terminal results without
+retry. Infrastructure and retryable internal errors are retried with bounded
+backoff.
+
+Retry messages reuse the original request payload and key. The worker adds:
+
+- `x-retry-count`: number of retries already scheduled.
+- `x-retry-reason`: normalized failure reason.
+- `x-retry-error-class`: `infra` or `internal`.
+- `x-retry-not-before`: earliest processing time in RFC3339Nano format.
+- `x-original-topic`, `x-original-partition`, `x-original-offset`: source
+  request coordinates preserved across retry hops.
+
+`kafka.retry.max_attempts` is the total number of handling attempts, including
+the first delivery. After it is exhausted, the worker publishes a DLQ message.
+
 ## Dead Letter
 
 Dead-letter messages preserve enough context for debugging:
@@ -99,6 +148,7 @@ Dead-letter messages preserve enough context for debugging:
 - Retryability.
 - Original topic, partition, and offset.
 - Original key.
+- Original headers.
 - Optional original payload as base64.
 
 DLQ is for unsafe or exhausted messages. User-code failures such as failed tests, syntax errors, timeouts, and memory limits are normal results, not DLQ messages.

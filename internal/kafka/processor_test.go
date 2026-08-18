@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/security"
 )
 
@@ -189,6 +191,270 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 	}
 }
 
+func TestProcessorRetryableHandlerErrorSchedulesRetryAndCommits(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.requests.v1",
+				Partition: 0,
+				Offset:    10,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		return NewRetryableProcessingError(ErrorClassInfra, "gojudge_unavailable", errors.New("dial tcp failed"), false)
+	}))
+	processor.RetryPolicy = RetryPolicy{
+		Enabled:            true,
+		MaxAttempts:        3,
+		InitialBackoff:     time.Second,
+		MaxBackoff:         10 * time.Second,
+		BackoffMultiplier:  2,
+		EarlyRetrySleepCap: time.Millisecond,
+	}
+	processor.Metrics = observability.NewSchedulerMetrics()
+
+	if err := processor.ProcessOnce(context.Background()); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(consumer.committed) != 1 {
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one retry message, got %d", len(producer.messages))
+		return
+	}
+
+	retryMessage := producer.messages[0]
+	if retryMessage.Topic != processor.Topics.Retry {
+		t.Errorf("expected retry topic, got %q", retryMessage.Topic)
+	}
+	if retryMessage.Headers[HeaderRetryCount] != "1" {
+		t.Errorf("expected retry count 1, got %q", retryMessage.Headers[HeaderRetryCount])
+	}
+	if retryMessage.Headers[HeaderRetryReason] != "gojudge_unavailable" {
+		t.Errorf("expected retry reason, got %q", retryMessage.Headers[HeaderRetryReason])
+	}
+	if retryMessage.Headers[HeaderOriginalTopic] != "code-execution.requests.v1" {
+		t.Errorf("expected original topic header, got %q", retryMessage.Headers[HeaderOriginalTopic])
+	}
+	metrics := processor.Metrics.Snapshot()
+	if metrics.RetriesScheduled["gojudge_unavailable"] != 1 {
+		t.Errorf("expected retry metric, got %#v", metrics.RetriesScheduled)
+	}
+}
+
+func TestProcessorRetryMessageTooEarlyIsNotCommitted(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.retry.v1",
+				Partition: 0,
+				Offset:    12,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers: map[string]string{
+					HeaderTraceID:        req.TraceID,
+					HeaderRetryCount:     "1",
+					HeaderRetryReason:    "gojudge_unavailable",
+					HeaderRetryNotBefore: time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano),
+				},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	handlerCalled := false
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		handlerCalled = true
+		return nil
+	}))
+	processor.RetryPolicy = RetryPolicy{
+		Enabled:            true,
+		MaxAttempts:        3,
+		InitialBackoff:     time.Second,
+		MaxBackoff:         10 * time.Second,
+		BackoffMultiplier:  2,
+		EarlyRetrySleepCap: time.Millisecond,
+	}
+	processor.Metrics = observability.NewSchedulerMetrics()
+
+	err = processor.ProcessOnce(context.Background())
+	if !errors.Is(err, ErrRetryNotReady) {
+		t.Errorf("expected ErrRetryNotReady, got %v", err)
+		return
+	}
+	if handlerCalled {
+		t.Error("handler must not be called before retry not-before")
+	}
+	if len(consumer.committed) != 0 {
+		t.Errorf("expected no committed messages, got %d", len(consumer.committed))
+	}
+	if len(producer.messages) != 0 {
+		t.Errorf("expected no published messages, got %d", len(producer.messages))
+	}
+	metrics := processor.Metrics.Snapshot()
+	if metrics.RetriesDelayed["gojudge_unavailable"] != 1 {
+		t.Errorf("expected delayed retry metric, got %#v", metrics.RetriesDelayed)
+	}
+}
+
+func TestProcessorRetryExhaustedPublishesResultDLQAndCommits(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.retry.v1",
+				Partition: 1,
+				Offset:    11,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers: map[string]string{
+					HeaderTraceID:           req.TraceID,
+					HeaderRetryCount:        "2",
+					HeaderRetryReason:       "gojudge_unavailable",
+					HeaderOriginalTopic:     "code-execution.requests.v1",
+					HeaderOriginalPartition: "0",
+					HeaderOriginalOffset:    "10",
+				},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		return NewRetryableProcessingError(ErrorClassInfra, "gojudge_unavailable", errors.New("dial tcp failed"), false)
+	}))
+	processor.RetryPolicy = RetryPolicy{Enabled: true, MaxAttempts: 3, BackoffMultiplier: 2}
+	processor.Metrics = observability.NewSchedulerMetrics()
+
+	if err := processor.ProcessOnce(context.Background()); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(consumer.committed) != 1 {
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
+	}
+	if len(producer.messages) != 2 {
+		t.Errorf("expected result and DLQ messages, got %d", len(producer.messages))
+		return
+	}
+
+	result, err := DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode exhausted result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusInternalError {
+		t.Errorf("expected internal_error result, got %q", result.Status)
+	}
+	if result.Error == nil || result.Error.Retryable {
+		t.Errorf("expected non-retryable exhausted error result, got %#v", result.Error)
+	}
+
+	deadLetter, err := DecodeRunDeadLetter(producer.messages[1].Value)
+	if err != nil {
+		t.Errorf("decode exhausted dead letter: %v", err)
+		return
+	}
+	if deadLetter.OriginalTopic != "code-execution.requests.v1" {
+		t.Errorf("expected original request topic, got %q", deadLetter.OriginalTopic)
+	}
+	if deadLetter.OriginalOffset != 10 {
+		t.Errorf("expected original offset 10, got %d", deadLetter.OriginalOffset)
+	}
+	if deadLetter.OriginalHeaders[HeaderRetryCount] != "2" {
+		t.Errorf("expected original retry headers, got %#v", deadLetter.OriginalHeaders)
+	}
+	metrics := processor.Metrics.Snapshot()
+	if metrics.RetriesExhausted["gojudge_unavailable"] != 1 {
+		t.Errorf("expected retry exhausted metric, got %#v", metrics.RetriesExhausted)
+	}
+	if metrics.DLQPublished["gojudge_unavailable"] != 1 {
+		t.Errorf("expected DLQ metric, got %#v", metrics.DLQPublished)
+	}
+}
+
+func TestProcessorNonRetryableUserErrorPublishesResultDLQAndCommits(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode request: %v", err)
+		return
+	}
+
+	consumer := &fakeConsumer{
+		messages: []Message{
+			{
+				Topic:     "code-execution.requests.v1",
+				Partition: 0,
+				Offset:    12,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{HeaderTraceID: req.TraceID},
+			},
+		},
+	}
+	producer := &fakeProducer{}
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		return NewProcessingError(ErrorClassUser, "attempt_conflict", errors.New("attempt id reused"), false)
+	}))
+
+	if err := processor.ProcessOnce(context.Background()); err != nil {
+		t.Errorf("process once: %v", err)
+		return
+	}
+	if len(consumer.committed) != 1 {
+		t.Errorf("expected one committed message, got %d", len(consumer.committed))
+	}
+	if len(producer.messages) != 2 {
+		t.Errorf("expected result and DLQ messages, got %d", len(producer.messages))
+		return
+	}
+	result, err := DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode user error result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusInvalidRequest {
+		t.Errorf("expected invalid_request result, got %q", result.Status)
+	}
+	if result.Error == nil || result.Error.Code != "attempt_conflict" {
+		t.Errorf("expected attempt_conflict error, got %#v", result.Error)
+	}
+	deadLetter, err := DecodeRunDeadLetter(producer.messages[1].Value)
+	if err != nil {
+		t.Errorf("decode user error dead letter: %v", err)
+		return
+	}
+	if deadLetter.Reason != "attempt_conflict" {
+		t.Errorf("expected attempt_conflict DLQ, got %q", deadLetter.Reason)
+	}
+}
+
 func TestProcessorOversizedPayloadPublishesDLQBeforeDecode(t *testing.T) {
 	consumer := &fakeConsumer{
 		messages: []Message{
@@ -294,6 +560,7 @@ func testProcessor(t *testing.T, consumer Consumer, producer Producer, handler R
 func testTopics() TopicNames {
 	return TopicNames{
 		Requests:   "code-execution.requests.v1",
+		Retry:      "code-execution.retry.v1",
 		Events:     "code-execution.events.v1",
 		Results:    "code-execution.results.v1",
 		DeadLetter: "code-execution.deadletter.v1",

@@ -134,12 +134,13 @@ func (s *PostgresRunStore) ReserveAttempt(ctx context.Context, req contracts.Run
 	}
 
 	var existingSubmissionID string
+	var existingStatus AttemptStatus
 	var resultJSON []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT submission_id::text, result_json
+		SELECT submission_id::text, status, result_json
 		FROM attempts
 		WHERE attempt_id = $1
-	`, req.AttemptID).Scan(&existingSubmissionID, &resultJSON)
+	`, req.AttemptID).Scan(&existingSubmissionID, &existingStatus, &resultJSON)
 	if err != nil {
 		return AttemptReservation{}, err
 	}
@@ -148,6 +149,28 @@ func (s *PostgresRunStore) ReserveAttempt(ctx context.Context, req contracts.Run
 	}
 
 	if len(resultJSON) == 0 {
+		if existingStatus != AttemptStatusRunning {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE attempts
+				SET
+					status = $2,
+					worker_instance_id = NULLIF($3, ''),
+					started_at = $4,
+					completed_at = NULL,
+					lease_expires_at = NULL,
+					last_error_class = NULL,
+					last_error_reason = NULL,
+					last_error_message = NULL,
+					updated_at = $4
+				WHERE attempt_id = $1
+			`, req.AttemptID, AttemptStatusRunning, workerID, now); err != nil {
+				return AttemptReservation{}, err
+			}
+			if err := tx.Commit(); err != nil {
+				return AttemptReservation{}, err
+			}
+			return AttemptReservation{State: AttemptReserved}, nil
+		}
 		if err := tx.Commit(); err != nil {
 			return AttemptReservation{}, err
 		}
@@ -221,6 +244,55 @@ func (s *PostgresRunStore) CompleteAttempt(ctx context.Context, result contracts
 		return err
 	}
 	if err := insertArtifactsTx(ctx, tx, ArtifactsFromRunResult(runID, result, now)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresRunStore) FailAttempt(ctx context.Context, failure AttemptFailure) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	failedAt := failure.FailedAt.UTC()
+	if failedAt.IsZero() {
+		failedAt = s.now()
+	}
+	status := failure.Status
+	if status == "" {
+		status = AttemptStatusFailedInternal
+	}
+
+	var runID string
+	err = tx.QueryRowContext(ctx, `
+		UPDATE attempts
+		SET
+			status = $2,
+			worker_instance_id = COALESCE(NULLIF($3, ''), worker_instance_id),
+			delivery_attempts = GREATEST(delivery_attempts, $4),
+			last_error_class = NULLIF($5, ''),
+			last_error_reason = NULLIF($6, ''),
+			last_error_message = NULLIF($7, ''),
+			completed_at = $8,
+			lease_expires_at = NULL,
+			updated_at = $8
+		WHERE attempt_id = $1 AND submission_id = $9
+		RETURNING run_id::text
+	`, failure.AttemptID, status, failure.WorkerInstanceID, failure.DeliveryAttempts, failure.ErrorClass, failure.Reason, failure.Message, failedAt, failure.SubmissionID).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return attemptNotFoundOrConflict(ctx, tx, failure.AttemptID, failure.SubmissionID)
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE runs
+		SET status = $2, updated_at = $3
+		WHERE run_id = $1
+	`, runID, RunStatusRunning, failedAt); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -451,6 +523,10 @@ func (s *PostgresRunStore) GetAttempt(ctx context.Context, attemptID string) (At
 			request_json,
 			result_json,
 			COALESCE(worker_instance_id, ''),
+			delivery_attempts,
+			COALESCE(last_error_class, ''),
+			COALESCE(last_error_reason, ''),
+			COALESCE(last_error_message, ''),
 			started_at,
 			completed_at,
 			lease_expires_at,
@@ -569,7 +645,7 @@ func (s *PostgresRunStore) ListAttemptTestResults(ctx context.Context, attemptID
 
 func (s *PostgresRunStore) ListArtifacts(ctx context.Context, runID string, attemptID string) ([]ArtifactRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT artifact_id::text, run_id::text, COALESCE(attempt_id::text, ''), kind, storage_provider, COALESCE(object_key, ''), content_hash, size_bytes, truncated, created_at
+		SELECT artifact_id::text, run_id::text, COALESCE(attempt_id::text, ''), kind, storage_provider, COALESCE(bucket, ''), COALESCE(object_key, ''), content_type, content_hash, size_bytes, truncated, created_at
 		FROM artifacts
 		WHERE
 			(NULLIF($1, '')::uuid IS NULL OR run_id = NULLIF($1, '')::uuid)
@@ -584,7 +660,7 @@ func (s *PostgresRunStore) ListArtifacts(ctx context.Context, runID string, atte
 	var records []ArtifactRecord
 	for rows.Next() {
 		var record ArtifactRecord
-		if err := rows.Scan(&record.ArtifactID, &record.RunID, &record.AttemptID, &record.Kind, &record.StorageProvider, &record.ObjectKey, &record.ContentHash, &record.SizeBytes, &record.Truncated, &record.CreatedAt); err != nil {
+		if err := rows.Scan(&record.ArtifactID, &record.RunID, &record.AttemptID, &record.Kind, &record.StorageProvider, &record.Bucket, &record.ObjectKey, &record.ContentType, &record.ContentHash, &record.SizeBytes, &record.Truncated, &record.CreatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, record)
@@ -887,21 +963,25 @@ func insertArtifactsTx(ctx context.Context, tx *sql.Tx, records []ArtifactRecord
 				attempt_id,
 				kind,
 				storage_provider,
+				bucket,
 				object_key,
+				content_type,
 				content_hash,
 				size_bytes,
 				truncated,
 				created_at
 			)
-			VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, NULLIF($6, ''), $7, $8, $9, $10)
+			VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, NULLIF($6, ''), NULLIF($7, ''), COALESCE(NULLIF($8, ''), 'application/octet-stream'), $9, $10, $11, $12)
 			ON CONFLICT (artifact_id) DO UPDATE
 			SET
 				storage_provider = EXCLUDED.storage_provider,
+				bucket = EXCLUDED.bucket,
 				object_key = EXCLUDED.object_key,
+				content_type = EXCLUDED.content_type,
 				content_hash = EXCLUDED.content_hash,
 				size_bytes = EXCLUDED.size_bytes,
 				truncated = EXCLUDED.truncated
-		`, record.ArtifactID, record.RunID, record.AttemptID, record.Kind, record.StorageProvider, record.ObjectKey, record.ContentHash, record.SizeBytes, record.Truncated, record.CreatedAt); err != nil {
+		`, record.ArtifactID, record.RunID, record.AttemptID, record.Kind, record.StorageProvider, record.Bucket, record.ObjectKey, record.ContentType, record.ContentHash, record.SizeBytes, record.Truncated, record.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -1049,6 +1129,10 @@ func scanAttemptRecord(row scanner) (AttemptRecord, error) {
 		&requestJSON,
 		&resultJSON,
 		&record.WorkerInstanceID,
+		&record.DeliveryAttempts,
+		&record.LastErrorClass,
+		&record.LastErrorReason,
+		&record.LastErrorMessage,
 		&record.StartedAt,
 		&completedAt,
 		&leaseExpiresAt,
