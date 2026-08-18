@@ -152,14 +152,24 @@ type ObjectStorageTestsConfig struct {
 }
 
 type StorageConfig struct {
-	Type     string        `yaml:"type"`
-	Postgres PostgresStore `yaml:"postgres"`
+	Type      string                 `yaml:"type"`
+	Postgres  PostgresStore          `yaml:"postgres"`
+	Retention StorageRetentionConfig `yaml:"retention"`
 }
 
 type PostgresStore struct {
 	DSN                string `yaml:"dsn"`
 	MaxOpenConnections int    `yaml:"max_open_connections"`
 	MaxIdleConnections int    `yaml:"max_idle_connections"`
+}
+
+type StorageRetentionConfig struct {
+	CompletedRunsDays      int `yaml:"completed_runs_days"`
+	ArtifactsDays          int `yaml:"artifacts_days"`
+	PublishedOutboxDays    int `yaml:"published_outbox_days"`
+	FailedOutboxDays       int `yaml:"failed_outbox_days"`
+	IdempotencyKeysDays    int `yaml:"idempotency_keys_days"`
+	WorkerHeartbeatStaleMS int `yaml:"worker_heartbeat_stale_ms"`
 }
 
 type SecurityConfig struct {
@@ -274,6 +284,14 @@ func Default() Config {
 		},
 		Storage: StorageConfig{
 			Type: "memory",
+			Retention: StorageRetentionConfig{
+				CompletedRunsDays:      7,
+				ArtifactsDays:          7,
+				PublishedOutboxDays:    3,
+				FailedOutboxDays:       30,
+				IdempotencyKeysDays:    30,
+				WorkerHeartbeatStaleMS: 120000,
+			},
 		},
 		Security: SecurityConfig{
 			Network: NetworkSecurityConfig{
@@ -428,6 +446,24 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_POSTGRES_DSN"); value != "" {
 		cfg.Storage.Postgres.DSN = value
 	}
+	if err := applyIntEnv("SANDBOX_RETENTION_COMPLETED_RUNS_DAYS", &cfg.Storage.Retention.CompletedRunsDays); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_RETENTION_ARTIFACTS_DAYS", &cfg.Storage.Retention.ArtifactsDays); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_RETENTION_PUBLISHED_OUTBOX_DAYS", &cfg.Storage.Retention.PublishedOutboxDays); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_RETENTION_FAILED_OUTBOX_DAYS", &cfg.Storage.Retention.FailedOutboxDays); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_RETENTION_IDEMPOTENCY_KEYS_DAYS", &cfg.Storage.Retention.IdempotencyKeysDays); err != nil {
+		return err
+	}
+	if err := applyIntEnv("SANDBOX_WORKER_HEARTBEAT_STALE_MS", &cfg.Storage.Retention.WorkerHeartbeatStaleMS); err != nil {
+		return err
+	}
 	if err := applyBoolEnv("SANDBOX_ALLOW_USER_CODE_NETWORK", &cfg.Security.Network.AllowUserCodeNetwork); err != nil {
 		return err
 	}
@@ -530,6 +566,24 @@ func (cfg Config) Validate() error {
 		}
 	default:
 		errs = append(errs, "storage.type must be memory or postgres")
+	}
+	if cfg.Storage.Retention.CompletedRunsDays < 0 {
+		errs = append(errs, "storage.retention.completed_runs_days must not be negative")
+	}
+	if cfg.Storage.Retention.ArtifactsDays < 0 {
+		errs = append(errs, "storage.retention.artifacts_days must not be negative")
+	}
+	if cfg.Storage.Retention.PublishedOutboxDays < 0 {
+		errs = append(errs, "storage.retention.published_outbox_days must not be negative")
+	}
+	if cfg.Storage.Retention.FailedOutboxDays < 0 {
+		errs = append(errs, "storage.retention.failed_outbox_days must not be negative")
+	}
+	if cfg.Storage.Retention.IdempotencyKeysDays < 0 {
+		errs = append(errs, "storage.retention.idempotency_keys_days must not be negative")
+	}
+	if cfg.Storage.Retention.WorkerHeartbeatStaleMS < 0 {
+		errs = append(errs, "storage.retention.worker_heartbeat_stale_ms must not be negative")
 	}
 
 	if cfg.Tests.Inline.Enabled && !cfg.FeatureFlags.InlineTests {

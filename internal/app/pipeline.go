@@ -102,6 +102,9 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 			return nil, nil, nil, fmt.Errorf("create run store: %w", err)
 		}
 	}
+	if err := registerWorkerInventory(context.Background(), runStore, cfg); err != nil {
+		return nil, nil, nil, fmt.Errorf("register worker inventory: %w", err)
+	}
 
 	topics := kafka.TopicNamesFromConfig(cfg.Kafka.Topics)
 	securityPolicy := security.PolicyFromConfigAndLimits(cfg, limitsConfig)
@@ -206,6 +209,19 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 func (p requestPipeline) completeAndPublish(ctx context.Context, result contracts.RunResult) error {
 	if err := p.store.CompleteAttempt(ctx, result); err != nil {
 		return err
+	}
+	attempt, ok, err := p.store.GetAttempt(ctx, result.AttemptID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		event, err := storage.ResultOutboxEvent(attempt.RunID, result, p.topics.Results, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if _, err := p.store.AppendOutboxEvent(ctx, event); err != nil {
+			return err
+		}
 	}
 	return p.publishResult(ctx, result)
 }

@@ -91,6 +91,13 @@ storage:
     dsn: ${SANDBOX_POSTGRES_DSN}
     max_open_connections: 30
     max_idle_connections: 10
+  retention:
+    completed_runs_days: 90
+    artifacts_days: 30
+    published_outbox_days: 14
+    failed_outbox_days: 90
+    idempotency_keys_days: 90
+    worker_heartbeat_stale_ms: 120000
 
 security:
   network:

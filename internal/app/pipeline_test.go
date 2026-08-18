@@ -14,6 +14,7 @@ import (
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/kafka"
 	"overmindv/sandbox/internal/observability"
+	"overmindv/sandbox/internal/storage"
 )
 
 func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
@@ -49,12 +50,14 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 		},
 	}
 	producer := &pipelineProducer{}
+	store := storage.NewMemoryRunStore()
 
 	var logs bytes.Buffer
 	logger := observability.NewLogger("debug", "json", &logs)
 	worker, err := app.NewWorkerWithDeps(cfg, logger, app.WorkerDeps{
 		Consumer: consumer,
 		Producer: producer,
+		RunStore: store,
 	})
 	if err != nil {
 		t.Errorf("new worker with deps: %v", err)
@@ -110,6 +113,28 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 	if result.WorkerID != cfg.App.WorkerID {
 		t.Errorf("expected worker id %q, got %q", cfg.App.WorkerID, result.WorkerID)
+	}
+
+	run, ok, err := store.GetRunBySubmission(context.Background(), req.SubmissionID)
+	if err != nil {
+		t.Errorf("get stored run: %v", err)
+		return
+	}
+	if !ok {
+		t.Error("expected run to be stored")
+		return
+	}
+	outboxEvents, err := store.ListOutboxEvents(context.Background(), storage.OutboxFilter{Status: storage.OutboxStatusPending})
+	if err != nil {
+		t.Errorf("list outbox events: %v", err)
+		return
+	}
+	if len(outboxEvents) != 1 {
+		t.Errorf("expected one pending outbox event, got %d", len(outboxEvents))
+		return
+	}
+	if outboxEvents[0].RunID != run.RunID || outboxEvents[0].AttemptID != req.AttemptID {
+		t.Errorf("expected outbox to reference run %q attempt %q, got %#v", run.RunID, req.AttemptID, outboxEvents[0])
 	}
 }
 

@@ -88,6 +88,13 @@ storage:
     dsn: ""
     max_open_connections: 5
     max_idle_connections: 2
+  retention:
+    completed_runs_days: 7
+    artifacts_days: 7
+    published_outbox_days: 3
+    failed_outbox_days: 30
+    idempotency_keys_days: 30
+    worker_heartbeat_stale_ms: 120000
 
 security:
   network:

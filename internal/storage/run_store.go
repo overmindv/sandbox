@@ -15,6 +15,7 @@ var (
 	ErrAttemptConflict     = errors.New("attempt id belongs to another submission")
 	ErrAttemptNotFound     = errors.New("attempt not found")
 	ErrIdempotencyConflict = errors.New("idempotency key belongs to another attempt")
+	ErrOutboxEventNotFound = errors.New("outbox event not found")
 )
 
 type AttemptReservationState string
@@ -41,6 +42,19 @@ type RunStore interface {
 	CompleteAttempt(ctx context.Context, result contracts.RunResult) error
 	GetAttemptResult(ctx context.Context, attemptID string) (contracts.RunResult, bool, error)
 	BindIdempotencyKey(ctx context.Context, key string, attemptID string) (IdempotencyKeyBinding, error)
+	UpsertWorkerInstance(ctx context.Context, worker WorkerInstanceRecord) error
+	ReplaceWorkerCapabilities(ctx context.Context, workerID string, capabilities []WorkerCapabilityRecord) error
+	GetWorkerInstance(ctx context.Context, workerID string) (WorkerInstanceRecord, bool, error)
+	ListWorkerCapabilities(ctx context.Context, workerID string) ([]WorkerCapabilityRecord, error)
+	GetRunBySubmission(ctx context.Context, submissionID string) (RunRecord, bool, error)
+	GetAttempt(ctx context.Context, attemptID string) (AttemptRecord, bool, error)
+	ListRunFiles(ctx context.Context, runID string) ([]RunFileRecord, error)
+	ListRunTests(ctx context.Context, runID string) ([]RunTestRecord, error)
+	ListAttemptTestResults(ctx context.Context, attemptID string) ([]AttemptTestResultRecord, error)
+	ListArtifacts(ctx context.Context, runID string, attemptID string) ([]ArtifactRecord, error)
+	AppendOutboxEvent(ctx context.Context, event OutboxEventRecord) (OutboxEventRecord, error)
+	ListOutboxEvents(ctx context.Context, filter OutboxFilter) ([]OutboxEventRecord, error)
+	MarkOutboxPublished(ctx context.Context, eventID string, publishedAt time.Time) error
 	Close() error
 }
 

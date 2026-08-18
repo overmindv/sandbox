@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"overmindv/sandbox/internal/storage"
 )
 
 var ErrWorkerAlreadyStarted = errors.New("worker already started")
@@ -92,6 +94,16 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 		}
 	}
 	if w.runStore != nil {
+		now := time.Now().UTC()
+		if err := w.runStore.UpsertWorkerInstance(ctx, storage.WorkerInstanceRecord{
+			WorkerInstanceID: w.cfg.App.WorkerID,
+			Status:           storage.WorkerStatusStopped,
+			LastSeenAt:       now,
+			StoppedAt:        &now,
+			UpdatedAt:        now,
+		}); err != nil {
+			return err
+		}
 		if err := w.runStore.Close(); err != nil {
 			return err
 		}
