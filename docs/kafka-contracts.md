@@ -56,9 +56,10 @@ The request contains:
 
 The sandbox must reject unsafe paths before creating files. Absolute paths, Windows drive paths, and `..` segments are invalid.
 
-For `tests.source=object_storage`, the request carries `suite_id`, optional
-`version`, and optional `checksum_sha256` for the suite manifest object. The
-worker reads:
+For `tests.source=object_storage`, Kafka carries only a test-suite reference:
+required `suite_id`, optional `version`, and required lowercase
+`checksum_sha256` for the suite manifest object. Hidden test files stay outside
+Kafka. The worker reads:
 
 `<tests.object_storage.key_prefix>/test-suites/<suite_id>/<version-or-latest>.json`
 

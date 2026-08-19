@@ -30,7 +30,7 @@ type WorkerDeps struct {
 	Metrics   *observability.SchedulerMetrics
 	RunStore  storage.RunStore
 	Artifacts *artifacts.Manager
-	Tests     testsources.Provider
+	Tests     testsources.TestSourceProvider
 }
 
 type requestExecutor struct {
@@ -60,7 +60,7 @@ type requestPipeline struct {
 	security   security.Policy
 	store      storage.RunStore
 	artifacts  *artifacts.Manager
-	tests      testsources.Provider
+	tests      testsources.TestSourceProvider
 	metrics    *observability.SchedulerMetrics
 	logger     *observability.Logger
 	tracer     *observability.Tracer

@@ -15,6 +15,7 @@ var (
 	ErrUnsupportedTestSource      = errors.New("unsupported test source")
 	ErrInvalidSuite               = errors.New("invalid test suite")
 	ErrChecksumMismatch           = errors.New("checksum mismatch")
+	ErrSuiteTooLarge              = errors.New("test suite too large")
 )
 
 type SourceError struct {
@@ -34,23 +35,25 @@ func (e SourceError) Unwrap() error {
 	return e.Err
 }
 
-type Provider interface {
+type TestSourceProvider interface {
 	Resolve(ctx context.Context, req contracts.RunRequest) (contracts.RunRequest, error)
 }
+
+type Provider = TestSourceProvider
 
 type Resolver struct {
 	inline        InlineProvider
 	objectStorage *ObjectStorageProvider
 }
 
-func NewResolver(objectStorage *ObjectStorageProvider) Provider {
+func NewResolver(objectStorage *ObjectStorageProvider) TestSourceProvider {
 	return Resolver{
 		inline:        InlineProvider{},
 		objectStorage: objectStorage,
 	}
 }
 
-func NewProviderFromConfig(cfg config.TestsConfig) (Provider, error) {
+func NewProviderFromConfig(cfg config.TestsConfig) (TestSourceProvider, error) {
 	var objectStorage *ObjectStorageProvider
 	if cfg.ObjectStorage.Enabled {
 		store, err := objectstore.New(config.ArtifactStorageConfig{

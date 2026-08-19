@@ -532,6 +532,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_TESTS_KEY_PREFIX"); value != "" {
 		cfg.Tests.ObjectStorage.KeyPrefix = value
 	}
+	if err := applyIntEnv("SANDBOX_TESTS_CACHE_TTL_MS", &cfg.Tests.ObjectStorage.CacheTTLMS); err != nil {
+		return err
+	}
 	if err := applyIntEnv("SANDBOX_TESTS_OBJECT_MAX_BYTES", &cfg.Tests.ObjectStorage.MaxBytes); err != nil {
 		return err
 	}

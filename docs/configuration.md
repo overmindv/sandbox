@@ -106,6 +106,7 @@ Initial environment variables:
 | `SANDBOX_TESTS_ACCESS_KEY_ID` | `tests.object_storage.access_key_id` |
 | `SANDBOX_TESTS_SECRET_ACCESS_KEY` | `tests.object_storage.secret_access_key` |
 | `SANDBOX_TESTS_KEY_PREFIX` | `tests.object_storage.key_prefix` |
+| `SANDBOX_TESTS_CACHE_TTL_MS` | `tests.object_storage.cache_ttl_ms` |
 | `SANDBOX_TESTS_OBJECT_MAX_BYTES` | `tests.object_storage.max_bytes` |
 | `SANDBOX_TESTS_REQUEST_TIMEOUT_MS` | `tests.object_storage.request_timeout_ms` |
 | `SANDBOX_TESTS_FORCE_PATH_STYLE` | `tests.object_storage.force_path_style` |
@@ -135,8 +136,10 @@ buckets; switch `SANDBOX_ARTIFACTS_PROVIDER=s3` and point
 ## Object Storage Test Suites
 
 When `tests.object_storage.enabled=true`, requests may provide
-`tests.source=object_storage` with `suite_id`, optional `version`, and optional
-`checksum_sha256`. The worker loads a JSON suite manifest from:
+`tests.source=object_storage` with required `suite_id`, optional `version`, and
+required lowercase `checksum_sha256`. Kafka carries only this reference and
+checksum; hidden test files stay in object storage. The worker loads a JSON
+suite manifest from:
 
 `<key_prefix>/test-suites/<suite_id>/<version-or-latest>.json`
 

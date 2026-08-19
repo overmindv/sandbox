@@ -33,6 +33,7 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	t.Setenv("SANDBOX_ARTIFACTS_PROVIDER", "filesystem")
 	t.Setenv("SANDBOX_ARTIFACTS_ROOT_DIR", ".test-artifacts")
 	t.Setenv("SANDBOX_ARTIFACTS_INLINE_MAX_BYTES", "123")
+	t.Setenv("SANDBOX_TESTS_CACHE_TTL_MS", "456")
 
 	cfg, err := Load(filepath.Join("..", "..", "configs", "local.yaml"))
 	if err != nil {
@@ -53,6 +54,9 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	}
 	if cfg.Storage.Artifacts.InlineMaxBytes != 123 {
 		t.Errorf("expected artifact inline max env override, got %d", cfg.Storage.Artifacts.InlineMaxBytes)
+	}
+	if cfg.Tests.ObjectStorage.CacheTTLMS != 456 {
+		t.Errorf("expected tests cache ttl env override, got %d", cfg.Tests.ObjectStorage.CacheTTLMS)
 	}
 }
 

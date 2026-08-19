@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -16,6 +17,15 @@ import (
 )
 
 const SuiteSchemaVersion = "sandbox.testsuite.v1"
+
+type CachePolicy struct {
+	Enabled bool
+	TTL     time.Duration
+}
+
+type SuiteValidationOptions struct {
+	MaxDecodedBytes int
+}
 
 type Suite struct {
 	SchemaVersion string                 `json:"schema_version"`
@@ -48,6 +58,21 @@ func NewObjectStorageProvider(cfg config.ObjectStorageTestsConfig, store objects
 		cache: make(map[string]cachedSuite),
 		now:   func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func CachePolicyFromConfig(cfg config.ObjectStorageTestsConfig) CachePolicy {
+	ttl := time.Duration(cfg.CacheTTLMS) * time.Millisecond
+	return CachePolicy{
+		Enabled: ttl > 0,
+		TTL:     ttl,
+	}
+}
+
+func (p *ObjectStorageProvider) CachePolicy() CachePolicy {
+	if p == nil {
+		return CachePolicy{}
+	}
+	return CachePolicyFromConfig(p.cfg)
 }
 
 func (p *ObjectStorageProvider) Resolve(ctx context.Context, req contracts.RunRequest) (contracts.RunRequest, error) {
@@ -93,8 +118,12 @@ func (p *ObjectStorageProvider) Resolve(ctx context.Context, req contracts.RunRe
 	if err := json.Unmarshal(payload, &suite); err != nil {
 		return contracts.RunRequest{}, SourceError{Reason: "test_suite_decode_failed", Retryable: false, Err: err}
 	}
-	if err := ValidateSuite(suite); err != nil {
-		return contracts.RunRequest{}, SourceError{Reason: "invalid_test_suite", Retryable: false, Err: err}
+	if err := ValidateSuiteWithOptions(suite, SuiteValidationOptions{MaxDecodedBytes: p.cfg.MaxBytes}); err != nil {
+		reason := "invalid_test_suite"
+		if errors.Is(err, ErrSuiteTooLarge) {
+			reason = "test_suite_too_large"
+		}
+		return contracts.RunRequest{}, SourceError{Reason: reason, Retryable: false, Err: err}
 	}
 	if suite.SuiteID != req.Tests.SuiteID {
 		return contracts.RunRequest{}, SourceError{
@@ -123,6 +152,10 @@ func (p *ObjectStorageProvider) Resolve(ctx context.Context, req contracts.RunRe
 }
 
 func ValidateSuite(suite Suite) error {
+	return ValidateSuiteWithOptions(suite, SuiteValidationOptions{})
+}
+
+func ValidateSuiteWithOptions(suite Suite, opts SuiteValidationOptions) error {
 	if suite.SchemaVersion != SuiteSchemaVersion {
 		return fmt.Errorf("%w: schema_version must be %q", ErrInvalidSuite, SuiteSchemaVersion)
 	}
@@ -135,16 +168,21 @@ func ValidateSuite(suite Suite) error {
 	if len(suite.Files) == 0 {
 		return fmt.Errorf("%w: at least one file is required", ErrInvalidSuite)
 	}
+	totalDecodedBytes := 0
 	for _, file := range suite.Files {
 		if strings.TrimSpace(file.Path) == "" {
 			return fmt.Errorf("%w: file path is required", ErrInvalidSuite)
 		}
 		content, err := base64.StdEncoding.DecodeString(file.ContentB64)
 		if err != nil {
-			return fmt.Errorf("%w: decode file %q: %v", ErrInvalidSuite, file.Path, err)
+			return fmt.Errorf("%w: decode file %q: %w", ErrInvalidSuite, file.Path, err)
+		}
+		totalDecodedBytes += len(content)
+		if opts.MaxDecodedBytes > 0 && totalDecodedBytes > opts.MaxDecodedBytes {
+			return fmt.Errorf("%w: %w: decoded test bundle is %d bytes, max is %d", ErrInvalidSuite, ErrSuiteTooLarge, totalDecodedBytes, opts.MaxDecodedBytes)
 		}
 		if err := VerifySHA256(content, file.ChecksumSHA256); err != nil {
-			return fmt.Errorf("%w: file %q: %v", ErrInvalidSuite, file.Path, err)
+			return fmt.Errorf("%w: file %q: %w", ErrInvalidSuite, file.Path, err)
 		}
 	}
 	return nil
@@ -181,7 +219,8 @@ func applySuite(req contracts.RunRequest, suite Suite) (contracts.RunRequest, er
 }
 
 func (p *ObjectStorageProvider) getCached(key string, expectedChecksum string) (Suite, bool, error) {
-	if p.cfg.CacheTTLMS <= 0 {
+	policy := p.CachePolicy()
+	if !policy.Enabled {
 		return Suite{}, false, nil
 	}
 	p.mu.Lock()
@@ -205,7 +244,8 @@ func (p *ObjectStorageProvider) getCached(key string, expectedChecksum string) (
 }
 
 func (p *ObjectStorageProvider) putCached(key string, suite Suite, payloadSHA256 string) {
-	if p.cfg.CacheTTLMS <= 0 {
+	policy := p.CachePolicy()
+	if !policy.Enabled {
 		return
 	}
 	p.mu.Lock()
@@ -213,7 +253,7 @@ func (p *ObjectStorageProvider) putCached(key string, suite Suite, payloadSHA256
 	p.cache[key] = cachedSuite{
 		suite:         cloneSuite(suite),
 		payloadSHA256: payloadSHA256,
-		expiresAt:     p.now().Add(time.Duration(p.cfg.CacheTTLMS) * time.Millisecond),
+		expiresAt:     p.now().Add(policy.TTL),
 	}
 }
 

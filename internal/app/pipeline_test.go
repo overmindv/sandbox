@@ -878,7 +878,7 @@ func validPipelineRunRequest() contracts.RunRequest {
 	}
 }
 
-func objectStorageTestProvider(t *testing.T) (testsources.Provider, string) {
+func objectStorageTestProvider(t *testing.T) (testsources.TestSourceProvider, string) {
 	t.Helper()
 
 	content := []byte("from solution import add\n\ndef test_add():\n    assert add(1, 2) == 3\n")
