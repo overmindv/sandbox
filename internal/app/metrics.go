@@ -125,6 +125,22 @@ func (s *MetricsServer) render() string {
 	writeCounterMap(&b, "sandbox_scheduler_jobs_completed_total", "status", snapshot.Completed)
 	writeHelp(&b, "sandbox_scheduler_jobs_timed_out_total", "counter", "Total timed out jobs by language.")
 	writeCounterMap(&b, "sandbox_scheduler_jobs_timed_out_total", "language", snapshot.TimedOut)
+	writeHelp(&b, "sandbox_kafka_messages_consumed_total", "counter", "Total consumed Kafka messages by topic.")
+	writeCounterMap(&b, "sandbox_kafka_messages_consumed_total", "topic", snapshot.Consumed)
+	writeHelp(&b, "sandbox_kafka_messages_produced_total", "counter", "Total produced Kafka messages by topic.")
+	writeCounterMap(&b, "sandbox_kafka_messages_produced_total", "topic", snapshot.Produced)
+	writeHelp(&b, "sandbox_kafka_message_failures_total", "counter", "Total Kafka message processing or publishing failures by reason.")
+	writeCounterMap(&b, "sandbox_kafka_message_failures_total", "reason", snapshot.MessageFailures)
+	writeHelp(&b, "sandbox_results_total", "counter", "Total terminal results by execution status.")
+	writeCounterMap(&b, "sandbox_results_total", "status", snapshot.ResultStatuses)
+	writeHelp(&b, "sandbox_results_by_language_total", "counter", "Total terminal results by language.")
+	writeCounterMap(&b, "sandbox_results_by_language_total", "language", snapshot.ResultLanguages)
+	writeHelp(&b, "sandbox_worker_processing_duration_ms", "summary", "Worker processing duration in milliseconds by stage.")
+	writeDurationStatsMap(&b, "sandbox_worker_processing_duration_ms", "stage", snapshot.ProcessingDurationsByStage)
+	writeHelp(&b, "sandbox_kafka_queue_lag_ms", "summary", "Kafka queue lag in milliseconds by consumed topic.")
+	writeDurationStatsMap(&b, "sandbox_kafka_queue_lag_ms", "topic", snapshot.QueueLagByTopic)
+	writeHelp(&b, "sandbox_executor_latency_ms", "summary", "Executor latency in milliseconds by language.")
+	writeDurationStatsMap(&b, "sandbox_executor_latency_ms", "language", snapshot.ExecutorLatencyByLanguage)
 	writeHelp(&b, "sandbox_kafka_retries_scheduled_total", "counter", "Total retry messages scheduled by reason.")
 	writeCounterMap(&b, "sandbox_kafka_retries_scheduled_total", "reason", snapshot.RetriesScheduled)
 	writeHelp(&b, "sandbox_kafka_retries_delayed_total", "counter", "Total retry messages delayed because not-before was in the future.")
@@ -166,6 +182,17 @@ func writeCounterMap(b *strings.Builder, name string, label string, values map[s
 	}
 }
 
+func writeDurationStatsMap(b *strings.Builder, name string, label string, values map[string]observability.DurationStats) {
+	keys := sortedDurationKeys(values)
+	for _, key := range keys {
+		escaped := escapeLabelValue(key)
+		stats := values[key]
+		fmt.Fprintf(b, "%s_count{%s=%q} %d\n", name, label, escaped, stats.Count)
+		fmt.Fprintf(b, "%s_sum{%s=%q} %d\n", name, label, escaped, stats.SumMS)
+		fmt.Fprintf(b, "%s_max{%s=%q} %d\n", name, label, escaped, stats.MaxMS)
+	}
+}
+
 func sortedIntKeys(values map[string]int) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -176,6 +203,15 @@ func sortedIntKeys(values map[string]int) []string {
 }
 
 func sortedInt64Keys(values map[string]int64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedDurationKeys(values map[string]observability.DurationStats) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

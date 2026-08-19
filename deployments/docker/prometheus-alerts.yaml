@@ -1,0 +1,38 @@
+groups:
+  - name: sandbox-worker
+    rules:
+      - alert: SandboxHighDLQ
+        expr: sum(increase(sandbox_kafka_dlq_published_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sandbox DLQ volume is high
+          description: More than 5 sandbox messages were published to DLQ in the last 5 minutes.
+
+      - alert: SandboxHighInternalErrors
+        expr: sum(increase(sandbox_results_total{status="internal_error"}[5m])) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Sandbox internal error rate is high
+          description: Internal execution results are rising and may indicate worker, storage, or executor failures.
+
+      - alert: SandboxHighKafkaLag
+        expr: max(sandbox_kafka_queue_lag_ms_max) > 30000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sandbox Kafka queue lag is high
+          description: Consumed messages are older than 30 seconds, which points to worker saturation or Kafka lag.
+
+      - alert: SandboxExecutorUnavailable
+        expr: sum(increase(sandbox_scheduler_jobs_rejected_total{reason="executor_unhealthy"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Sandbox executor is unavailable
+          description: Scheduler admission rejected jobs because executor health checks failed.

@@ -48,6 +48,8 @@ type Processor struct {
 	Metrics           *observability.SchedulerMetrics
 	Now               func() time.Time
 	Logger            *observability.Logger
+	Tracer            *observability.Tracer
+	Audit             *observability.AuditLogger
 }
 
 func NewProcessor(consumer Consumer, producer Producer, topics TopicNames, workerID string, handler RunRequestHandler, logger *observability.Logger) (*Processor, error) {
@@ -85,22 +87,53 @@ func NewProcessor(consumer Consumer, producer Producer, topics TopicNames, worke
 		Handler: handler,
 		Now:     func() time.Time { return time.Now().UTC() },
 		Logger:  logger,
+		Tracer:  observability.NewTracer(false, logger),
+		Audit:   observability.NewAuditLogger(true, logger),
 	}, nil
 }
 
 func (p *Processor) ProcessOnce(ctx context.Context) error {
+	totalStartedAt := p.now()
+	defer func() {
+		if p.Metrics != nil {
+			p.Metrics.ObserveProcessingDuration("total", p.now().Sub(totalStartedAt))
+		}
+	}()
+
+	consumeStartedAt := p.now()
+	consumeCtx, endConsume := p.startSpan(ctx, "consume")
 	msg, err := p.Consumer.FetchMessage(ctx)
 	if err != nil {
+		endConsume(err)
+		if p.Metrics != nil {
+			p.Metrics.ObserveProcessingDuration("consume", p.now().Sub(consumeStartedAt))
+			p.Metrics.IncMessageFailure("consume_failed")
+		}
 		return err
 	}
+	endConsume(nil, "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset)
+	if p.Metrics != nil {
+		p.Metrics.IncConsumed(msg.Topic)
+		p.Metrics.ObserveProcessingDuration("consume", p.now().Sub(consumeStartedAt))
+		if !msg.Time.IsZero() {
+			p.Metrics.ObserveQueueLag(msg.Topic, p.now().Sub(msg.Time))
+		}
+	}
+	ctx = consumeCtx
 
 	if !p.CommitPolicy.CommitAfterResultPublish {
 		if err := p.Consumer.CommitMessages(ctx, msg); err != nil {
+			if p.Metrics != nil {
+				p.Metrics.IncMessageFailure("commit_failed")
+			}
 			return err
 		}
 	}
 
 	if err := p.ProcessMessage(ctx, msg); err != nil {
+		if p.Metrics != nil {
+			p.Metrics.IncMessageFailure("process_failed")
+		}
 		if !p.CommitPolicy.CommitAfterResultPublish {
 			return fmt.Errorf("%w: %w", ErrCommitBeforeHandling, err)
 		}
@@ -108,7 +141,12 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 	}
 
 	if p.CommitPolicy.CommitAfterResultPublish {
-		return p.Consumer.CommitMessages(ctx, msg)
+		if err := p.Consumer.CommitMessages(ctx, msg); err != nil {
+			if p.Metrics != nil {
+				p.Metrics.IncMessageFailure("commit_failed")
+			}
+			return err
+		}
 	}
 	return nil
 }
@@ -128,9 +166,23 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 		return err
 	}
 
+	validateStartedAt := p.now()
+	validateCtx, endValidate := p.startSpan(ctx, "validate", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset)
+	ctx = validateCtx
+	finishValidate := func(err error, attrs ...any) {
+		endValidate(err, attrs...)
+		if p.Metrics != nil {
+			p.Metrics.ObserveProcessingDuration("validate", p.now().Sub(validateStartedAt))
+		}
+	}
+
 	if p.SecurityGuard != nil {
 		if err := p.SecurityGuard.ValidatePayload(msg.Value); err != nil {
 			p.Logger.Warn(ctx, "kafka payload rejected by security guard", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			if p.Audit != nil {
+				p.Audit.SecurityReject(ctx, "payload_rejected", err, "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset)
+			}
+			finishValidate(err, "reason", "payload_rejected")
 			return p.publishDeadLetter(ctx, msg, "payload_rejected", err, false, contracts.RunRequest{})
 		}
 	}
@@ -139,6 +191,7 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	if err != nil {
 		if !json.Valid(msg.Value) {
 			p.Logger.Warn(ctx, "malformed kafka message", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			finishValidate(err, "reason", "malformed_json")
 			return p.publishDeadLetter(ctx, msg, "malformed_json", err, false, contracts.RunRequest{})
 		}
 
@@ -148,6 +201,7 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 			ctx = observability.WithTraceID(ctx, partial.TraceID)
 		}
 		p.Logger.Warn(ctx, "invalid kafka request shape", "topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+		finishValidate(err, "reason", "invalid_request")
 		return p.publishInvalidRequest(ctx, msg, partial, err)
 	}
 
@@ -157,14 +211,20 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 
 	if err := contracts.ValidateRunRequestWithOptions(req, p.ValidationOptions); err != nil {
 		p.Logger.Warn(ctx, "invalid run request", "attempt_id", req.AttemptID, "error", err)
+		finishValidate(err, "reason", "invalid_request", "attempt_id", req.AttemptID)
 		return p.publishInvalidRequest(ctx, msg, req, err)
 	}
 	if p.SecurityGuard != nil {
 		if err := p.SecurityGuard.ValidateRunRequest(req); err != nil {
 			p.Logger.Warn(ctx, "run request rejected by security guard", "attempt_id", req.AttemptID, "error", err)
+			if p.Audit != nil {
+				p.Audit.SecurityReject(ctx, "request_rejected", err, "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
+			}
+			finishValidate(err, "reason", "request_rejected", "attempt_id", req.AttemptID)
 			return p.publishInvalidRequest(ctx, msg, req, err)
 		}
 	}
+	finishValidate(nil, "attempt_id", req.AttemptID, "language", req.Language.ID)
 
 	if p.Handler == nil {
 		return p.handleProcessingError(ctx, msg, req, ErrNoRunRequestHandler)
@@ -206,7 +266,7 @@ func (p *Processor) handleProcessingError(ctx context.Context, msg Message, req 
 	if err := p.appendOutboxForMessage(ctx, req, storage.OutboxEventRetryReady, retryMessage, nextRetryCount); err != nil {
 		return err
 	}
-	if err := p.Producer.WriteMessages(ctx, retryMessage); err != nil {
+	if err := p.writeMessages(ctx, retryMessage); err != nil {
 		return err
 	}
 
@@ -258,7 +318,11 @@ func (p *Processor) publishInvalidRequest(ctx context.Context, msg Message, req 
 		p.Metrics.IncErrorResult("invalid_request")
 		p.Metrics.IncDLQPublished("invalid_request")
 	}
-	return p.Producer.WriteMessages(ctx, resultMessage, deadLetterMessage)
+	if err := p.writeMessages(ctx, resultMessage, deadLetterMessage); err != nil {
+		return err
+	}
+	p.recordResult(result)
+	return nil
 }
 
 func (p *Processor) publishDeadLetter(ctx context.Context, msg Message, reason string, cause error, retryable bool, req contracts.RunRequest) error {
@@ -277,7 +341,7 @@ func (p *Processor) publishDeadLetter(ctx context.Context, msg Message, reason s
 	if p.Metrics != nil {
 		p.Metrics.IncDLQPublished(reason)
 	}
-	return p.Producer.WriteMessages(ctx, deadLetterMessage)
+	return p.writeMessages(ctx, deadLetterMessage)
 }
 
 func (p *Processor) publishTerminalError(ctx context.Context, msg Message, req contracts.RunRequest, decision RetryDecision) error {
@@ -311,7 +375,11 @@ func (p *Processor) publishTerminalError(ctx context.Context, msg Message, req c
 			p.Metrics.IncErrorResult(decision.Reason)
 			p.Metrics.IncDLQPublished(decision.Reason)
 		}
-		return p.Producer.WriteMessages(ctx, resultMessage, deadLetterMessage)
+		if err := p.writeMessages(ctx, resultMessage, deadLetterMessage); err != nil {
+			return err
+		}
+		p.recordResult(result)
+		return nil
 	}
 
 	return p.publishDeadLetter(ctx, msg, decision.Reason, errors.New(decision.Message), false, req)
@@ -319,6 +387,7 @@ func (p *Processor) publishTerminalError(ctx context.Context, msg Message, req c
 
 func (p *Processor) publishRetryExhausted(ctx context.Context, msg Message, req contracts.RunRequest, decision RetryDecision, retryCount int) error {
 	messages := make([]Message, 0, 2)
+	results := make([]contracts.RunResult, 0, 1)
 	if known, ok, err := p.knownAttemptResult(ctx, req.AttemptID); err != nil {
 		return err
 	} else if ok {
@@ -327,6 +396,7 @@ func (p *Processor) publishRetryExhausted(ctx context.Context, msg Message, req 
 			return err
 		}
 		messages = append(messages, resultMessage)
+		results = append(results, known)
 	} else if req.AttemptID != "" && decision.Reason != "attempt_in_progress" {
 		result := p.errorResult(req, contracts.StatusInternalError, decision, false)
 		if err := p.completeAttemptIfReserved(ctx, result); err != nil {
@@ -340,6 +410,7 @@ func (p *Processor) publishRetryExhausted(ctx context.Context, msg Message, req 
 			return err
 		}
 		messages = append(messages, resultMessage)
+		results = append(results, result)
 		if p.Metrics != nil {
 			p.Metrics.IncErrorResult(decision.Reason)
 		}
@@ -361,7 +432,13 @@ func (p *Processor) publishRetryExhausted(ctx context.Context, msg Message, req 
 	if p.Metrics != nil {
 		p.Metrics.IncDLQPublished(decision.Reason)
 	}
-	return p.Producer.WriteMessages(ctx, messages...)
+	if err := p.writeMessages(ctx, messages...); err != nil {
+		return err
+	}
+	for _, result := range results {
+		p.recordResult(result)
+	}
+	return nil
 }
 
 func (p *Processor) markAttemptRetryableFailure(ctx context.Context, req contracts.RunRequest, decision RetryDecision, retryCount int) error {
@@ -664,4 +741,40 @@ func (p *Processor) now() time.Time {
 		return p.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func (p *Processor) startSpan(ctx context.Context, name string, attrs ...any) (context.Context, func(error, ...any)) {
+	if p == nil || p.Tracer == nil {
+		return ctx, func(error, ...any) {}
+	}
+	return p.Tracer.Start(ctx, name, attrs...)
+}
+
+func (p *Processor) writeMessages(ctx context.Context, messages ...Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	publishStartedAt := p.now()
+	publishCtx, endPublish := p.startSpan(ctx, "publish", "message_count", len(messages))
+	err := p.Producer.WriteMessages(publishCtx, messages...)
+	endPublish(err)
+	if p.Metrics != nil {
+		p.Metrics.ObserveProcessingDuration("publish", p.now().Sub(publishStartedAt))
+		if err != nil {
+			p.Metrics.IncMessageFailure("produce_failed")
+		} else {
+			for _, msg := range messages {
+				p.Metrics.IncProduced(msg.Topic)
+			}
+		}
+	}
+	return err
+}
+
+func (p *Processor) recordResult(result contracts.RunResult) {
+	if p == nil || p.Metrics == nil {
+		return
+	}
+	p.Metrics.IncResultStatus(string(result.Status))
+	p.Metrics.IncResultLanguage(result.Language.ID)
 }

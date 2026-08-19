@@ -35,6 +35,7 @@ type WorkerDeps struct {
 
 type requestExecutor struct {
 	executor execution.Executor
+	metrics  *observability.SchedulerMetrics
 }
 
 func (h requestExecutor) HandleJob(ctx context.Context, job scheduler.Job) (any, error) {
@@ -42,7 +43,12 @@ func (h requestExecutor) HandleJob(ctx context.Context, job scheduler.Job) (any,
 	if !ok {
 		return execution.ExecutionResult{}, execution.ErrInvalidCommandPayload
 	}
-	return h.executor.Execute(ctx, command)
+	startedAt := time.Now()
+	result, err := h.executor.Execute(ctx, command)
+	if h.metrics != nil {
+		h.metrics.ObserveExecutorLatency(command.Language.ID, time.Since(startedAt))
+	}
+	return result, err
 }
 
 type requestPipeline struct {
@@ -57,6 +63,8 @@ type requestPipeline struct {
 	tests      testsources.Provider
 	metrics    *observability.SchedulerMetrics
 	logger     *observability.Logger
+	tracer     *observability.Tracer
+	audit      *observability.AuditLogger
 }
 
 func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, storage.RunStore, error) {
@@ -96,8 +104,10 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 	if metrics == nil {
 		metrics = observability.NewSchedulerMetrics()
 	}
+	tracer := observability.NewTracer(cfg.Observability.TracingEnabled, logger)
+	audit := observability.NewAuditLogger(cfg.Observability.AuditEnabled, logger)
 
-	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor}, metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
+	dispatcher, err := scheduler.NewDispatcher(cfg.Scheduler, requestExecutor{executor: executor, metrics: metrics}, metrics, logger, scheduler.ExecutorHealthFunc(executor.Healthy))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create scheduler dispatcher: %w", err)
 	}
@@ -147,6 +157,8 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		tests:      testSources,
 		metrics:    metrics,
 		logger:     logger,
+		tracer:     tracer,
+		audit:      audit,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
 	if err != nil {
@@ -157,6 +169,8 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 	processor.RetryPolicy = kafka.RetryPolicyFromConfig(cfg.Kafka.Retry)
 	processor.RunStore = runStore
 	processor.Metrics = metrics
+	processor.Tracer = tracer
+	processor.Audit = audit
 
 	return processor, dispatcher, runStore, nil
 }
@@ -177,6 +191,7 @@ func executorFromConfig(cfg config.ExecutorConfig) (execution.Executor, error) {
 }
 
 func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Message, req contracts.RunRequest) error {
+	_ = envelope
 	reservation, err := p.store.ReserveAttempt(ctx, req, p.workerID)
 	if err != nil {
 		return classifyStorageReservationError(err)
@@ -193,19 +208,35 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		return fmt.Errorf("unknown attempt reservation state %q", reservation.State)
 	}
 
+	prepareStartedAt := time.Now()
+	prepareCtx, endPrepare := p.startSpan(ctx, "prepare", "attempt_id", req.AttemptID, "language", req.Language.ID)
+	ctx = prepareCtx
+	finishPrepare := func(err error, attrs ...any) {
+		endPrepare(err, attrs...)
+		if p.metrics != nil {
+			p.metrics.ObserveProcessingDuration("prepare", time.Since(prepareStartedAt))
+		}
+	}
+
 	if p.tests != nil {
 		resolved, err := p.tests.Resolve(ctx, req)
 		if err != nil {
+			finishPrepare(err, "stage", "test_source")
 			return p.handleTestSourceError(ctx, req, err)
 		}
 		req = resolved
 		if err := security.NewGuard(p.security).ValidateRunRequest(req); err != nil {
+			if p.audit != nil {
+				p.audit.SecurityReject(ctx, "request_rejected", err, "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
+			}
+			finishPrepare(err, "stage", "security")
 			return p.completeInvalidRequest(ctx, req, "invalid_request", err)
 		}
 	}
 
 	command, err := p.languages.BuildCommand(ctx, req)
 	if err != nil {
+		finishPrepare(err, "stage", "language")
 		status := contracts.StatusInvalidRequest
 		code := "invalid_request"
 		if errors.Is(err, languages.ErrUnsupportedLanguage) {
@@ -220,9 +251,12 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		}
 		return p.completeAndPublish(ctx, result)
 	}
+	finishPrepare(nil, "stage", "language")
 
 	timeout := time.Duration(req.Limits.Wallms) * time.Millisecond
-	jobResult, err := p.dispatcher.DispatchAndWait(ctx, scheduler.Job{
+	executeStartedAt := time.Now()
+	executeCtx, endExecute := p.startSpan(ctx, "execute", "attempt_id", req.AttemptID, "language", req.Language.ID)
+	jobResult, err := p.dispatcher.DispatchAndWait(executeCtx, scheduler.Job{
 		ID:         req.AttemptID,
 		AttemptID:  req.AttemptID,
 		LanguageID: req.Language.ID,
@@ -230,6 +264,10 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		Timeout:    timeout,
 		Payload:    command,
 	})
+	endExecute(err, "scheduler_status", jobResult.Status)
+	if p.metrics != nil {
+		p.metrics.ObserveProcessingDuration("execute", time.Since(executeStartedAt))
+	}
 
 	var execResult execution.ExecutionResult
 	if errors.Is(err, scheduler.ErrJobTimeout) {
@@ -324,11 +362,30 @@ func (p requestPipeline) recordArtifactMetrics(before contracts.ResultLogs, afte
 }
 
 func (p requestPipeline) publishResult(ctx context.Context, result contracts.RunResult) error {
+	publishStartedAt := time.Now()
+	publishCtx, endPublish := p.startSpan(ctx, "publish", "topic", p.topics.Results, "attempt_id", result.AttemptID, "status", string(result.Status))
 	msg, err := kafka.MessageForResult(p.topics.Results, result, p.workerID)
 	if err != nil {
+		endPublish(err)
+		if p.metrics != nil {
+			p.metrics.ObserveProcessingDuration("publish", time.Since(publishStartedAt))
+			p.metrics.IncMessageFailure("result_message_build_failed")
+		}
 		return err
 	}
-	return p.producer.WriteMessages(ctx, msg)
+	err = p.producer.WriteMessages(publishCtx, msg)
+	endPublish(err)
+	if p.metrics != nil {
+		p.metrics.ObserveProcessingDuration("publish", time.Since(publishStartedAt))
+		if err != nil {
+			p.metrics.IncMessageFailure("produce_failed")
+		} else {
+			p.metrics.IncProduced(msg.Topic)
+			p.metrics.IncResultStatus(string(result.Status))
+			p.metrics.IncResultLanguage(result.Language.ID)
+		}
+	}
+	return err
 }
 
 func applyOutputPolicy(result execution.ExecutionResult, policy security.Policy) execution.ExecutionResult {
@@ -348,4 +405,11 @@ func classifyStorageReservationError(err error) error {
 	default:
 		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "storage_reserve_failed", err, false)
 	}
+}
+
+func (p requestPipeline) startSpan(ctx context.Context, name string, attrs ...any) (context.Context, func(error, ...any)) {
+	if p.tracer == nil {
+		return ctx, func(error, ...any) {}
+	}
+	return p.tracer.Start(ctx, name, attrs...)
 }

@@ -1,8 +1,10 @@
 package kafka
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -526,6 +528,10 @@ func TestProcessorSecurityRejectsArchiveBeforeHandler(t *testing.T) {
 		handled = true
 		return nil
 	}))
+	processor.Metrics = observability.NewSchedulerMetrics()
+	var logs bytes.Buffer
+	processor.Logger = observability.NewLogger("debug", "json", &logs)
+	processor.Audit = observability.NewAuditLogger(true, processor.Logger)
 
 	if err := processor.ProcessOnce(context.Background()); err != nil {
 		t.Errorf("process once: %v", err)
@@ -544,6 +550,19 @@ func TestProcessorSecurityRejectsArchiveBeforeHandler(t *testing.T) {
 	}
 	if result.Status != contracts.StatusInvalidRequest {
 		t.Errorf("expected invalid_request, got %q", result.Status)
+	}
+	if !strings.Contains(logs.String(), "security_reject") {
+		t.Errorf("expected security audit log, got %s", logs.String())
+	}
+	metrics := processor.Metrics.Snapshot()
+	if metrics.Consumed[processor.Topics.Requests] != 1 {
+		t.Errorf("expected consumed request metric, got %#v", metrics.Consumed)
+	}
+	if metrics.Produced[processor.Topics.Results] != 1 || metrics.Produced[processor.Topics.DeadLetter] != 1 {
+		t.Errorf("expected result and DLQ produced metrics, got %#v", metrics.Produced)
+	}
+	if metrics.ResultStatuses[string(contracts.StatusInvalidRequest)] != 1 {
+		t.Errorf("expected invalid_request result metric, got %#v", metrics.ResultStatuses)
 	}
 }
 

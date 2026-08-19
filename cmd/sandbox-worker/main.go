@@ -18,7 +18,9 @@ func main() {
 
 	if *configPath != "" {
 		if err := os.Setenv("SANDBOX_CONFIG_FILE", *configPath); err != nil {
-			panic(err)
+			logger := observability.NewLogger("error", "console", os.Stderr)
+			logger.Error(context.Background(), "config path setup failed", "error", err)
+			os.Exit(1)
 		}
 	}
 

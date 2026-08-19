@@ -52,11 +52,13 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 				Key:       []byte(req.AttemptID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+				Time:      req.CreatedAt.Add(-2 * time.Second),
 			},
 		},
 	}
 	producer := &pipelineProducer{}
 	store := storage.NewMemoryRunStore()
+	metrics := observability.NewSchedulerMetrics()
 
 	var logs bytes.Buffer
 	logger := observability.NewLogger("debug", "json", &logs)
@@ -64,6 +66,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 		Consumer: consumer,
 		Producer: producer,
 		RunStore: store,
+		Metrics:  metrics,
 	})
 	if err != nil {
 		t.Errorf("new worker with deps: %v", err)
@@ -141,6 +144,26 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 	if outboxEvents[0].RunID != run.RunID || outboxEvents[0].AttemptID != req.AttemptID {
 		t.Errorf("expected outbox to reference run %q attempt %q, got %#v", run.RunID, req.AttemptID, outboxEvents[0])
+	}
+
+	snapshot := metrics.Snapshot()
+	if snapshot.Consumed[cfg.Kafka.Topics.Requests] != 1 {
+		t.Errorf("expected consumed request metric, got %#v", snapshot.Consumed)
+	}
+	if snapshot.Produced[cfg.Kafka.Topics.Results] != 1 {
+		t.Errorf("expected produced result metric, got %#v", snapshot.Produced)
+	}
+	if snapshot.ResultStatuses[string(contracts.StatusFailed)] != 1 {
+		t.Errorf("expected failed result metric, got %#v", snapshot.ResultStatuses)
+	}
+	if snapshot.ResultLanguages["python"] != 1 {
+		t.Errorf("expected python result metric, got %#v", snapshot.ResultLanguages)
+	}
+	if snapshot.ExecutorLatencyByLanguage["python"].Count != 1 {
+		t.Errorf("expected executor latency metric, got %#v", snapshot.ExecutorLatencyByLanguage)
+	}
+	if snapshot.QueueLagByTopic[cfg.Kafka.Topics.Requests].Count != 1 {
+		t.Errorf("expected queue lag metric, got %#v", snapshot.QueueLagByTopic)
 	}
 }
 
