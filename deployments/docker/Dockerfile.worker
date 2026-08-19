@@ -20,15 +20,15 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates tzdata \
-	&& addgroup -S sandbox \
-	&& adduser -S -G sandbox sandbox
+	&& addgroup -S -g 10001 sandbox \
+	&& adduser -S -D -H -u 10001 -G sandbox sandbox
 
 WORKDIR /app
 
 COPY --from=build /out/sandbox-worker /usr/local/bin/sandbox-worker
 COPY configs ./configs
 
-USER sandbox
+USER 10001:10001
 
 EXPOSE 8080 9090
 

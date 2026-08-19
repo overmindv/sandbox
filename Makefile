@@ -22,4 +22,4 @@ e2e:
 	powershell -ExecutionPolicy Bypass -File scripts/load-test.ps1
 
 test:
-	go test ./internal/objectstore ./internal/artifacts ./internal/testsources ./internal/contracts ./internal/config ./internal/observability ./internal/app ./internal/kafka ./internal/scheduler ./internal/security ./internal/execution ./internal/execution/fake ./internal/execution/gojudge ./internal/execution/isolate ./internal/languages/... ./cmd/sandbox-worker
+	go test ./deployments/k8s ./internal/objectstore ./internal/artifacts ./internal/testsources ./internal/contracts ./internal/config ./internal/observability ./internal/app ./internal/kafka ./internal/scheduler ./internal/security ./internal/execution ./internal/execution/fake ./internal/execution/gojudge ./internal/execution/isolate ./internal/languages/... ./cmd/sandbox-worker

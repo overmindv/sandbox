@@ -1,0 +1,51 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sandbox-worker
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/name: sandbox-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: overmindv-sandbox
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sandbox-worker
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Requires Prometheus Adapter to expose sandbox_kafka_queue_lag_ms_max as a pod custom metric.
+    - type: Pods
+      pods:
+        metric:
+          name: sandbox_kafka_queue_lag_ms_max
+          selector:
+            matchLabels:
+              topic: code-execution.requests.v1
+        target:
+          type: AverageValue
+          averageValue: "30000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
