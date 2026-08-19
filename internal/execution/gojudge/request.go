@@ -47,6 +47,15 @@ func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, e
 	if len(command.Argv) == 0 {
 		return Request{}, fmt.Errorf("%w: argv is required", execution.ErrInvalidCommandPayload)
 	}
+	if err := security.ValidateRuntimeEnvironment(command.Environment); err != nil {
+		return Request{}, err
+	}
+	if command.RuntimeLimits.PIDs <= 0 {
+		return Request{}, fmt.Errorf("%w: runtime pids limit is required", execution.ErrInvalidCommandPayload)
+	}
+	if command.RuntimeLimits.MemoryBytes <= 0 {
+		return Request{}, fmt.Errorf("%w: runtime memory limit is required", execution.ErrInvalidCommandPayload)
+	}
 
 	copyIn := make(map[string]MemoryFile, len(command.Files))
 	for _, file := range command.Files {

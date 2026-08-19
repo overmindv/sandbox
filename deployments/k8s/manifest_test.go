@@ -23,9 +23,12 @@ func TestKubernetesManifestsParseAndContainRequiredObjects(t *testing.T) {
 		"ConfigMap/sandbox-worker-config":        false,
 		"Secret/sandbox-worker-secrets":          false,
 		"Deployment/sandbox-worker":              false,
+		"Service/gojudge":                        false,
+		"Deployment/gojudge":                     false,
 		"HorizontalPodAutoscaler/sandbox-worker": false,
 		"PodDisruptionBudget/sandbox-worker":     false,
 		"NetworkPolicy/sandbox-worker":           false,
+		"NetworkPolicy/gojudge-runtime":          false,
 		"Service/sandbox-worker":                 false,
 		"ServiceMonitor/sandbox-worker":          false,
 	}
@@ -84,6 +87,118 @@ func TestWorkerDeploymentSecurityBaseline(t *testing.T) {
 	}
 	if len(mapValue(container["resources"])) == 0 {
 		t.Error("expected container resource requests and limits")
+	}
+}
+
+func TestRuntimeDeploymentHardeningBaseline(t *testing.T) {
+	manifest, err := findManifest(".", "Deployment", "gojudge")
+	if err != nil {
+		t.Errorf("find runtime deployment: %v", err)
+		return
+	}
+
+	podSpec := podSpecFromDeployment(manifest)
+	if podSpec["automountServiceAccountToken"] != false {
+		t.Errorf("expected runtime automountServiceAccountToken=false, got %#v", podSpec["automountServiceAccountToken"])
+	}
+	nodeSelector := mapValue(podSpec["nodeSelector"])
+	if nodeSelector["overmindv.io/node-pool"] != "sandbox-runtime" {
+		t.Errorf("expected sandbox-runtime node pool, got %#v", nodeSelector)
+	}
+	podSecurity := mapValue(podSpec["securityContext"])
+	if mapValue(podSecurity["seccompProfile"])["type"] != "RuntimeDefault" {
+		t.Errorf("expected RuntimeDefault seccomp profile, got %#v", podSecurity["seccompProfile"])
+	}
+
+	template := mapValue(mapValue(manifest.Raw["spec"])["template"])
+	annotations := mapValue(mapValue(template["metadata"])["annotations"])
+	if annotations["container.apparmor.security.beta.kubernetes.io/gojudge"] == "" {
+		t.Errorf("expected AppArmor annotation, got %#v", annotations)
+	}
+
+	container, ok := containerByName(podSpec, "gojudge")
+	if !ok {
+		t.Error("expected gojudge container")
+		return
+	}
+	if len(listValue(container["env"])) != 0 || len(listValue(container["envFrom"])) != 0 {
+		t.Errorf("runtime container must not receive env or secrets, got env=%#v envFrom=%#v", container["env"], container["envFrom"])
+	}
+	containerSecurity := mapValue(container["securityContext"])
+	if containerSecurity["privileged"] != true {
+		t.Errorf("expected privileged go-judge supervisor, got %#v", containerSecurity["privileged"])
+	}
+	if containerSecurity["readOnlyRootFilesystem"] != true {
+		t.Errorf("expected runtime readOnlyRootFilesystem=true, got %#v", containerSecurity["readOnlyRootFilesystem"])
+	}
+	args := stringList(container["args"])
+	for _, expected := range []string{"-no-fallback", "-container-cred-start", "-tmp-fs-param", "-output-limit", "-copy-out-limit"} {
+		if !containsString(args, expected) {
+			t.Errorf("expected runtime args to contain %q, got %#v", expected, args)
+		}
+	}
+
+	volumes := listValue(podSpec["volumes"])
+	if !hasMemoryEmptyDir(volumes, "tmp") || !hasMemoryEmptyDir(volumes, "work") || !hasMemoryEmptyDir(volumes, "shm") {
+		t.Errorf("expected tmp/work/shm memory emptyDir volumes, got %#v", volumes)
+	}
+}
+
+func TestRuntimeNetworkPolicyDeniesAllEgress(t *testing.T) {
+	manifest, err := findManifest(".", "NetworkPolicy", "gojudge-runtime")
+	if err != nil {
+		t.Errorf("find runtime network policy: %v", err)
+		return
+	}
+
+	spec := mapValue(manifest.Raw["spec"])
+	if !containsString(stringList(spec["policyTypes"]), "Egress") {
+		t.Errorf("expected runtime network policy to include Egress, got %#v", spec["policyTypes"])
+	}
+	if len(listValue(spec["egress"])) != 0 {
+		t.Errorf("expected runtime egress to be empty, got %#v", spec["egress"])
+	}
+}
+
+func TestWorkerNetworkPolicyBlocksMetadataEndpointRanges(t *testing.T) {
+	manifest, err := findManifest(".", "NetworkPolicy", "sandbox-worker")
+	if err != nil {
+		t.Errorf("find worker network policy: %v", err)
+		return
+	}
+
+	if !networkPolicyExceptsCIDR(manifest, "169.254.0.0/16") {
+		t.Error("expected worker network policy to exclude metadata endpoint CIDR 169.254.0.0/16")
+	}
+}
+
+func TestManifestsDoNotUseHostPathOrDockerSocket(t *testing.T) {
+	manifests, err := loadManifests(".")
+	if err != nil {
+		t.Errorf("load manifests: %v", err)
+		return
+	}
+
+	for _, manifest := range manifests {
+		if manifest.Kind != "Deployment" {
+			continue
+		}
+		podSpec := podSpecFromDeployment(manifest)
+		for _, volume := range listValue(podSpec["volumes"]) {
+			volumeMap := mapValue(volume)
+			if _, ok := volumeMap["hostPath"]; ok {
+				t.Errorf("%s/%s must not use hostPath volume %#v", manifest.Kind, manifest.Name, volumeMap)
+			}
+		}
+		for _, container := range listValue(podSpec["containers"]) {
+			containerMap := mapValue(container)
+			for _, mount := range listValue(containerMap["volumeMounts"]) {
+				mountPath, _ := mapValue(mount)["mountPath"].(string)
+				if mountPath == "/var/run/docker.sock" {
+					t.Errorf("%s/%s must not mount Docker socket", manifest.Kind, manifest.Name)
+				}
+			}
+		}
 	}
 }
 
@@ -150,6 +265,22 @@ func findManifest(dir string, kind string, name string) (manifest, error) {
 	return manifest{}, errors.New("manifest not found")
 }
 
+func podSpecFromDeployment(manifest manifest) map[string]any {
+	spec := mapValue(manifest.Raw["spec"])
+	template := mapValue(spec["template"])
+	return mapValue(template["spec"])
+}
+
+func containerByName(podSpec map[string]any, name string) (map[string]any, bool) {
+	for _, container := range listValue(podSpec["containers"]) {
+		containerMap := mapValue(container)
+		if containerMap["name"] == name {
+			return containerMap, true
+		}
+	}
+	return nil, false
+}
+
 func mapValue(value any) map[string]any {
 	if value == nil {
 		return map[string]any{}
@@ -167,4 +298,52 @@ func listValue(value any) []any {
 	}
 	typed, _ := value.([]any)
 	return typed
+}
+
+func stringList(value any) []string {
+	values := listValue(value)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text, _ := value.(string)
+		if text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMemoryEmptyDir(volumes []any, name string) bool {
+	for _, volume := range volumes {
+		volumeMap := mapValue(volume)
+		if volumeMap["name"] != name {
+			continue
+		}
+		emptyDir := mapValue(volumeMap["emptyDir"])
+		return emptyDir["medium"] == "Memory" && emptyDir["sizeLimit"] != ""
+	}
+	return false
+}
+
+func networkPolicyExceptsCIDR(manifest manifest, cidr string) bool {
+	spec := mapValue(manifest.Raw["spec"])
+	for _, egress := range listValue(spec["egress"]) {
+		for _, target := range listValue(mapValue(egress)["to"]) {
+			except := listValue(mapValue(mapValue(target)["ipBlock"])["except"])
+			for _, item := range except {
+				if item == cidr {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

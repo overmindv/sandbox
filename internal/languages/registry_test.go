@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/languages"
 	"overmindv/sandbox/internal/languages/python"
@@ -126,6 +127,15 @@ func TestRegistryRejectsDisallowedExtension(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsSecretRuntimeEnvironment(t *testing.T) {
+	manifest := testManifestWithSecretEnvironment(t)
+
+	err := languages.ValidateManifest(manifest)
+	if err == nil {
+		t.Error("expected secret runtime environment to be rejected")
+	}
+}
+
 func testRegistry(t *testing.T) *languages.Registry {
 	t.Helper()
 	manifest, err := languages.LoadManifest("configs/languages.yaml")
@@ -184,6 +194,23 @@ func validLanguageRunRequest() contracts.RunRequest {
 		TraceID:   "trace-language",
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+func testManifestWithSecretEnvironment(t *testing.T) config.LanguageRegistryConfig {
+	t.Helper()
+	manifest, err := languages.LoadManifest("configs/languages.yaml")
+	if err != nil {
+		t.Errorf("load manifest: %v", err)
+		return config.LanguageRegistryConfig{}
+	}
+	if len(manifest.Languages) == 0 || len(manifest.Languages[0].Versions) == 0 {
+		return manifest
+	}
+	if manifest.Languages[0].Versions[0].Execution.Environment == nil {
+		manifest.Languages[0].Versions[0].Execution.Environment = map[string]string{}
+	}
+	manifest.Languages[0].Versions[0].Execution.Environment["AWS_SECRET_ACCESS_KEY"] = "leak"
+	return manifest
 }
 
 func encodeLanguageFixture(value string) string {

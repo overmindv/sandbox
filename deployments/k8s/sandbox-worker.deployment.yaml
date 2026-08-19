@@ -26,6 +26,7 @@ spec:
         app.kubernetes.io/component: worker
         app.kubernetes.io/part-of: overmindv-sandbox
       annotations:
+        container.apparmor.security.beta.kubernetes.io/sandbox-worker: runtime/default
         prometheus.io/scrape: "true"
         prometheus.io/path: /metrics
         prometheus.io/port: "9090"

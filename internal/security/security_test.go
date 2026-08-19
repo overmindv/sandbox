@@ -139,6 +139,38 @@ func TestTruncateOutputPolicy(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnvironmentRejectsSensitiveNames(t *testing.T) {
+	tests := []string{
+		"AWS_ACCESS_KEY_ID",
+		"SANDBOX_SECRET_ACCESS_KEY",
+		"DATABASE_PASSWORD",
+		"PRIVATE_KEY",
+		"API_TOKEN",
+	}
+
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateRuntimeEnvironment(map[string]string{name: "secret"})
+			if !hasViolationCode(err, CodeRuntimeSecretEnv) {
+				t.Errorf("expected runtime secret env violation, got %v", err)
+			}
+		})
+	}
+}
+
+func TestRuntimeEnvironmentAllowsNonSensitiveRuntimeNames(t *testing.T) {
+	err := ValidateRuntimeEnvironment(map[string]string{
+		"PATH":                           "/usr/local/bin:/usr/bin:/bin",
+		"PYTHONDONTWRITEBYTECODE":        "1",
+		"PYTHONHASHSEED":                 "0",
+		"SANDBOX_PYTEST_REPORT":          ".sandbox/pytest-report.json",
+		"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+	})
+	if err != nil {
+		t.Errorf("expected runtime environment to pass, got %v", err)
+	}
+}
+
 func validSecurityRunRequest() contracts.RunRequest {
 	return contracts.RunRequest{
 		SchemaVersion: contracts.RunRequestSchemaVersion,

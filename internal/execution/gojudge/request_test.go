@@ -76,6 +76,35 @@ func TestRequestFromExecutionCommandRejectsEmptyArgv(t *testing.T) {
 	}
 }
 
+func TestRequestFromExecutionCommandRejectsSecretRuntimeEnvironment(t *testing.T) {
+	command := validGoJudgeCommand()
+	command.Environment["AWS_SECRET_ACCESS_KEY"] = "leak"
+
+	_, err := RequestFromExecutionCommand(command)
+	if err == nil {
+		t.Error("expected secret runtime environment to be rejected")
+	}
+}
+
+func TestRequestFromExecutionCommandRequiresHardRuntimeLimits(t *testing.T) {
+	command := validGoJudgeCommand()
+	command.RuntimeLimits.PIDs = 0
+
+	_, err := RequestFromExecutionCommand(command)
+	if err == nil {
+		t.Error("expected missing pid limit to be rejected")
+		return
+	}
+
+	command = validGoJudgeCommand()
+	command.RuntimeLimits.MemoryBytes = 0
+
+	_, err = RequestFromExecutionCommand(command)
+	if err == nil {
+		t.Error("expected missing memory limit to be rejected")
+	}
+}
+
 func containsEnv(values []string, prefix string) bool {
 	for _, value := range values {
 		if strings.HasPrefix(value, prefix) {

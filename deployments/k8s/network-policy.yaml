@@ -50,6 +50,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: gojudge
+              app.kubernetes.io/component: sandbox-runtime
       ports:
         - protocol: TCP
           port: 5050

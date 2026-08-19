@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-up-ui dev-up-observability dev-up-object-storage dev-down topics e2e test
+.PHONY: dev-up dev-up-ui dev-up-observability dev-up-object-storage dev-down topics e2e security-smoke test
 
 dev-up:
 	powershell -ExecutionPolicy Bypass -File scripts/dev-up.ps1
@@ -20,6 +20,9 @@ topics:
 
 e2e:
 	powershell -ExecutionPolicy Bypass -File scripts/load-test.ps1
+
+security-smoke:
+	powershell -ExecutionPolicy Bypass -File scripts/security-smoke.ps1
 
 test:
 	go test ./deployments/k8s ./internal/objectstore ./internal/artifacts ./internal/testsources ./internal/contracts ./internal/config ./internal/observability ./internal/app ./internal/kafka ./internal/scheduler ./internal/security ./internal/execution ./internal/execution/fake ./internal/execution/gojudge ./internal/execution/isolate ./internal/languages/... ./cmd/sandbox-worker

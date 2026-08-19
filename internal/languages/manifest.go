@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"overmindv/sandbox/internal/config"
+	"overmindv/sandbox/internal/security"
 )
 
 const ManifestSchemaVersion = "sandbox.languages.v1"
@@ -85,6 +86,9 @@ func ValidateManifest(manifest config.LanguageRegistryConfig) error {
 			}
 			if len(version.Execution.Command.Argv) == 0 {
 				return fmt.Errorf("language %q@%s command argv is required", language.ID, version.Version)
+			}
+			if err := security.ValidateRuntimeEnvironment(version.Execution.Environment); err != nil {
+				return fmt.Errorf("language %q@%s environment: %w", language.ID, version.Version, err)
 			}
 		}
 		if defaultVersions != 1 {
