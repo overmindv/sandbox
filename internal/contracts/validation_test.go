@@ -15,6 +15,35 @@ func TestValidateRunRequestAcceptsValidInlinePython(t *testing.T) {
 	}
 }
 
+func TestValidateRunRequestAcceptsValidInlineGo(t *testing.T) {
+	req := validRunRequest()
+	req.Language = LanguageSpec{ID: "go", Version: "1.26"}
+	req.Code = CodeSpec{
+		Entrypoint: "solution.go",
+		Files: []SourceFile{
+			{
+				Path:       "solution.go",
+				ContentB64: encode("package solution\n\nfunc Add(a, b int) int { return a + b }\n"),
+			},
+		},
+	}
+	req.Tests = TestSpec{
+		Mode:       TestModeGoTest,
+		Source:     TestSourceInline,
+		Entrypoint: "solution_test.go",
+		Files: []SourceFile{
+			{
+				Path:       "solution_test.go",
+				ContentB64: encode("package solution\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(1, 2); got != 3 {\n\t\tt.Errorf(\"Add() = %d\", got)\n\t}\n}\n"),
+			},
+		},
+	}
+
+	if err := ValidateRunRequest(req); err != nil {
+		t.Errorf("expected Go request to be valid: %v", err)
+	}
+}
+
 func TestValidateRunRequestRejectsUnsafePaths(t *testing.T) {
 	tests := []struct {
 		name string

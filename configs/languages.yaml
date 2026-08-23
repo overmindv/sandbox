@@ -75,13 +75,13 @@ languages:
 
   - id: go
     display_name: Go
-    enabled: false
+    enabled: true
     adapter: go
     versions:
       - version: "1.26"
         default: true
         runtime_image: overmindv/sandbox-go:1.26
-        limits_profile: compiled-default
+        limits_profile: go-default
         test_modes:
           - go-test
         file_policy:
@@ -97,11 +97,20 @@ languages:
           working_dir: /workspace
           command:
             argv:
-              - go
+              - /usr/local/go/bin/go
               - test
+              - -json
+              - -p
+              - "1"
               - ./...
           environment:
+            CGO_ENABLED: "0"
+            GOCACHE: /tmp/go-build
+            GOMODCACHE: /tmp/go-mod
+            GOMAXPROCS: "2"
+            GOTOOLCHAIN: local
             GOPROXY: "off"
+            PATH: /usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
 
   - id: cpp
     display_name: C++

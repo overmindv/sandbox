@@ -1,8 +1,14 @@
 ARG GOJUDGE_IMAGE=criyle/go-judge:latest
+ARG GO_RUNTIME_VERSION=1.26
 
+FROM golang:${GO_RUNTIME_VERSION}-alpine AS go-runtime
 FROM ${GOJUDGE_IMAGE}
 
+ARG GO_RUNTIME_VERSION=1.26
+
 USER root
+
+COPY --from=go-runtime /usr/local/go /usr/local/go
 
 RUN set -eux; \
 	if command -v apt-get >/dev/null 2>&1; then \
@@ -18,4 +24,12 @@ RUN set -eux; \
 		echo "unsupported go-judge base image: no apt-get, apk, or microdnf" >&2; \
 		exit 1; \
 	fi; \
-	python3 -m pytest --version
+	python3 -m pytest --version; \
+	/usr/local/go/bin/go version
+
+ENV PATH="/usr/local/go/bin:${PATH}" \
+	CGO_ENABLED=0 \
+	GOCACHE=/tmp/go-build \
+	GOMODCACHE=/tmp/go-mod \
+	GOTOOLCHAIN=local \
+	GOPROXY=off

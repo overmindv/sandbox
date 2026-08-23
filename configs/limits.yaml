@@ -44,6 +44,15 @@ profiles:
     stderr_bytes: 32768
     workspace_bytes: 5242880
 
+  go-default:
+    cpu_ms: 10000
+    wall_ms: 30000
+    memory_mb: 512
+    pids: 64
+    stdout_bytes: 32768
+    stderr_bytes: 32768
+    workspace_bytes: 5242880
+
   heavy:
     cpu_ms: 10000
     wall_ms: 30000

@@ -12,6 +12,7 @@ import (
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/languages"
+	golang "overmindv/sandbox/internal/languages/go"
 )
 
 func TestBuildCommandGeneratesPytestWorkspace(t *testing.T) {
@@ -239,7 +240,7 @@ func testPythonRegistry(t *testing.T) *languages.Registry {
 		t.Errorf("load manifest: %v", err)
 		return nil
 	}
-	registry, err := languages.NewRegistry(manifest, NewAdapter())
+	registry, err := languages.NewRegistry(manifest, NewAdapter(), golang.NewAdapter())
 	if err != nil {
 		t.Errorf("new registry: %v", err)
 		return nil

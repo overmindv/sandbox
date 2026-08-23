@@ -143,8 +143,8 @@ func validateUUID(errs *ValidationErrors, field, value string) {
 }
 
 func validateTests(errs *ValidationErrors, tests TestSpec, opts ValidationOptions) {
-	if tests.Mode != TestModePytest {
-		errs.add("tests.mode", "must be pytest")
+	if tests.Mode != TestModePytest && tests.Mode != TestModeGoTest {
+		errs.add("tests.mode", "must be pytest or go-test")
 	}
 
 	switch tests.Source {

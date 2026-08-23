@@ -1,6 +1,6 @@
 # Sandbox Worker
 
-Локальная песочница читает `RunRequest` из Kafka, запускает Python/pytest через go-judge и пишет `RunResult` обратно в Kafka.
+Локальная песочница читает `RunRequest` из Kafka, запускает Python/pytest и Go/go test через go-judge и пишет `RunResult` обратно в Kafka.
 
 ## Local Docker Compose
 
@@ -88,9 +88,10 @@ Compose запускает `kafka-topics` один раз при старте. �
 
 ```powershell
 .\scripts\load-test.ps1
+.\scripts\load-test.ps1 -Language go
 ```
 
-Скрипт отправляет валидный Python job в `code-execution.requests.v1`, читает `code-execution.results.v1` и завершится с кодом `0`, если результат `passed`.
+Скрипт отправляет валидный Python или Go job в `code-execution.requests.v1`, читает `code-execution.results.v1` и завершится с кодом `0`, если результат `passed`.
 
 ### Диагностика
 

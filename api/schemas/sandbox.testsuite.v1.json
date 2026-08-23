@@ -23,7 +23,7 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["pytest"]
+      "enum": ["pytest", "go-test"]
     },
     "entrypoint": {
       "type": "string",

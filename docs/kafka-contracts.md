@@ -51,6 +51,7 @@ The request contains:
 - Language: `language.id`, `language.version`.
 - Source code: base64-encoded files with relative paths only.
 - Tests: inline files for MVP or a referenced object-storage suite.
+- Test modes: `pytest` for Python and `go-test` for Go.
 - Limits: CPU, wall time, memory, pids, stdout/stderr, workspace size.
 - Trace: `trace_id`.
 

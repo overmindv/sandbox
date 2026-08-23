@@ -9,7 +9,9 @@ import (
 
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/languages"
+	golang "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/python"
 )
 
@@ -63,6 +65,75 @@ func TestRegistryBuildsPythonCommandFromManifest(t *testing.T) {
 	}
 	if command.TestEntrypoint != "test_solution.py" {
 		t.Errorf("expected test_solution.py test entrypoint, got %q", command.TestEntrypoint)
+	}
+}
+
+func TestRegistryBuildsGoCommandFromManifest(t *testing.T) {
+	registry := testRegistry(t)
+	if registry == nil {
+		return
+	}
+
+	req := validLanguageRunRequest()
+	req.Language = contracts.LanguageSpec{ID: "go", Version: "1.26"}
+	req.Code = contracts.CodeSpec{
+		Entrypoint: "solution.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution.go",
+				ContentB64: encodeLanguageFixture("package solution\n\nfunc Add(a, b int) int { return a + b }\n"),
+			},
+		},
+	}
+	req.Tests = contracts.TestSpec{
+		Mode:       contracts.TestModeGoTest,
+		Source:     contracts.TestSourceInline,
+		Entrypoint: "solution_test.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution_test.go",
+				ContentB64: encodeLanguageFixture("package solution\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(1, 2); got != 3 {\n\t\tt.Errorf(\"Add() = %d\", got)\n\t}\n}\n"),
+			},
+		},
+	}
+
+	command, err := registry.BuildCommand(context.Background(), req)
+	if err != nil {
+		t.Errorf("build Go command: %v", err)
+		return
+	}
+
+	if command.Adapter != "go" {
+		t.Errorf("expected go adapter, got %q", command.Adapter)
+	}
+	if command.RuntimeImage != "overmindv/sandbox-go:1.26" {
+		t.Errorf("expected Go runtime image, got %q", command.RuntimeImage)
+	}
+	if command.WorkingDir != "/workspace" {
+		t.Errorf("expected /workspace working dir, got %q", command.WorkingDir)
+	}
+	wantArgv := []string{"/usr/local/go/bin/go", "test", "-json", "-p", "1", "./..."}
+	if len(command.Argv) != len(wantArgv) {
+		t.Errorf("expected Go argv %#v, got %#v", wantArgv, command.Argv)
+		return
+	}
+	for i := range wantArgv {
+		if command.Argv[i] != wantArgv[i] {
+			t.Errorf("expected Go argv %#v, got %#v", wantArgv, command.Argv)
+			return
+		}
+	}
+	if command.Environment["GOTOOLCHAIN"] != "local" {
+		t.Errorf("expected Go environment from manifest, got %#v", command.Environment)
+	}
+	if command.Environment["GOMAXPROCS"] != "2" {
+		t.Errorf("expected Go GOMAXPROCS from manifest, got %#v", command.Environment)
+	}
+	if command.Environment["PATH"] != "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" {
+		t.Errorf("expected Go PATH from manifest, got %#v", command.Environment)
+	}
+	if !containsCommandFile(command.Files, "go.mod", execution.FileKindHarness) {
+		t.Errorf("expected generated go.mod harness file, got %#v", command.Files)
 	}
 }
 
@@ -143,7 +214,7 @@ func testRegistry(t *testing.T) *languages.Registry {
 		t.Errorf("load manifest: %v", err)
 		return nil
 	}
-	registry, err := languages.NewRegistry(manifest, python.NewAdapter())
+	registry, err := languages.NewRegistry(manifest, python.NewAdapter(), golang.NewAdapter())
 	if err != nil {
 		t.Errorf("new registry: %v", err)
 		return nil
@@ -215,4 +286,13 @@ func testManifestWithSecretEnvironment(t *testing.T) config.LanguageRegistryConf
 
 func encodeLanguageFixture(value string) string {
 	return base64.StdEncoding.EncodeToString([]byte(value))
+}
+
+func containsCommandFile(files []execution.ExecutionFile, path string, kind execution.FileKind) bool {
+	for _, file := range files {
+		if file.Path == path && file.Kind == kind {
+			return true
+		}
+	}
+	return false
 }

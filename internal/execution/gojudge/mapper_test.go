@@ -1,17 +1,20 @@
 package gojudge
 
 import (
+	"strings"
 	"testing"
 
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/execution"
 )
 
 func TestExecutionResultFromResponseMapsGoJudgeStatuses(t *testing.T) {
 	tests := []struct {
-		name       string
-		response   Result
-		wantStatus contracts.ExecutionStatus
-		wantCode   string
+		name        string
+		commandFunc func(execution.ExecutionCommand) execution.ExecutionCommand
+		response    Result
+		wantStatus  contracts.ExecutionStatus
+		wantCode    string
 	}{
 		{
 			name: "accepted with pytest report",
@@ -36,6 +39,27 @@ func TestExecutionResultFromResponseMapsGoJudgeStatuses(t *testing.T) {
 				ExitStatus: 1,
 				Files: map[string]string{
 					".sandbox/pytest-report.json": `{"schema_version":"sandbox.pytest.report.v1","exitstatus":1,"tests":[{"name":"test_solution.py::test_add","status":"failed","message":"assert 1 == 2"}]}`,
+				},
+			},
+			wantStatus: contracts.StatusFailed,
+		},
+		{
+			name: "nonzero go test failure",
+			commandFunc: func(command execution.ExecutionCommand) execution.ExecutionCommand {
+				command.Adapter = "go"
+				command.Language = contracts.LanguageSpec{ID: "go", Version: "1.26"}
+				command.TestMode = contracts.TestModeGoTest
+				return command
+			},
+			response: Result{
+				Status:     StatusNonzeroExitStatus,
+				ExitStatus: 1,
+				Files: map[string]string{
+					stdoutName: strings.Join([]string{
+						`{"Action":"run","Package":"sandbox","Test":"TestAdd"}`,
+						`{"Action":"fail","Package":"sandbox","Test":"TestAdd","Elapsed":0.001}`,
+						`{"Action":"fail","Package":"sandbox","Elapsed":0.002}`,
+					}, "\n"),
 				},
 			},
 			wantStatus: contracts.StatusFailed,
@@ -84,9 +108,12 @@ func TestExecutionResultFromResponseMapsGoJudgeStatuses(t *testing.T) {
 		},
 	}
 
-	command := validGoJudgeCommand()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			command := validGoJudgeCommand()
+			if tt.commandFunc != nil {
+				command = tt.commandFunc(command)
+			}
 			result := ExecutionResultFromResponse(command, tt.response)
 			if result.Status != tt.wantStatus {
 				t.Errorf("expected status %q, got %q", tt.wantStatus, result.Status)

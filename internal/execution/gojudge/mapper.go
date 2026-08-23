@@ -7,6 +7,7 @@ import (
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	golang "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/python"
 )
 
@@ -24,6 +25,9 @@ func ExecutionResultFromResponse(command execution.ExecutionCommand, response Re
 	raw := RawExecutionResult(command, response)
 	if command.Adapter == python.AdapterName && command.TestMode == contracts.TestModePytest {
 		return python.ParsePytestResult(python.PytestResultInput{Raw: raw})
+	}
+	if command.Adapter == golang.AdapterName && command.TestMode == contracts.TestModeGoTest {
+		return golang.ParseGoTestResult(golang.GoTestResultInput{Raw: raw})
 	}
 	return genericExecutionResult(response, raw)
 }

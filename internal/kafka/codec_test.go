@@ -31,6 +31,49 @@ func TestRunRequestSerializationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGoRunRequestSerializationRoundTrip(t *testing.T) {
+	req := validKafkaRunRequest()
+	req.Language = contracts.LanguageSpec{ID: "go", Version: "1.26"}
+	req.Code = contracts.CodeSpec{
+		Entrypoint: "solution.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution.go",
+				ContentB64: encodeKafkaFixture("package solution\n\nfunc Add(a, b int) int { return a + b }\n"),
+			},
+		},
+	}
+	req.Tests = contracts.TestSpec{
+		Mode:       contracts.TestModeGoTest,
+		Source:     contracts.TestSourceInline,
+		Entrypoint: "solution_test.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution_test.go",
+				ContentB64: encodeKafkaFixture("package solution\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(1, 2); got != 3 {\n\t\tt.Errorf(\"Add() = %d\", got)\n\t}\n}\n"),
+			},
+		},
+	}
+
+	encoded, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode Go request: %v", err)
+		return
+	}
+
+	decoded, err := DecodeRunRequest(encoded)
+	if err != nil {
+		t.Errorf("decode Go request: %v", err)
+		return
+	}
+	if decoded.Language.ID != "go" {
+		t.Errorf("expected Go language, got %#v", decoded.Language)
+	}
+	if decoded.Tests.Mode != contracts.TestModeGoTest {
+		t.Errorf("expected go-test mode, got %q", decoded.Tests.Mode)
+	}
+}
+
 func TestDecodeRunRequestRejectsUnknownFields(t *testing.T) {
 	req := validKafkaRunRequest()
 	encoded, err := EncodeRunRequest(req)

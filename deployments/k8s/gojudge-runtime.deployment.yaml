@@ -73,7 +73,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gojudge
-          image: overmindv/sandbox-gojudge-python:dev
+          image: overmindv/sandbox-gojudge:dev
           imagePullPolicy: IfNotPresent
           args:
             - -http-addr

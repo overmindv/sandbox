@@ -46,6 +46,7 @@ type TestMode string
 
 const (
 	TestModePytest TestMode = "pytest"
+	TestModeGoTest TestMode = "go-test"
 )
 
 type TestSpec struct {

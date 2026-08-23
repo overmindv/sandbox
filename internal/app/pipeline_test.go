@@ -167,6 +167,101 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	}
 }
 
+func TestWorkerPipelineKafkaGoRequestToFakeResult(t *testing.T) {
+	cfg := config.Default()
+	cfg.App.WorkerID = "pipeline-go-worker-test"
+	cfg.Server.HealthAddr = "127.0.0.1:0"
+	cfg.Observability.MetricsEnabled = false
+	cfg.Executor.Type = "fake"
+	cfg.Executor.Fake.DefaultStatus = "passed"
+	cfg.Executor.Fake.LatencyMS = 0
+	cfg.Scheduler.JobTimeoutMS = 1000
+	cfg.Scheduler.Queue.MaxDepth = 8
+	cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+	req := validPipelineGoRunRequest()
+	payload, err := kafka.EncodeRunRequest(req)
+	if err != nil {
+		t.Errorf("encode Go request: %v", err)
+		return
+	}
+
+	consumer := &pipelineConsumer{
+		messages: []kafka.Message{
+			{
+				Topic:     cfg.Kafka.Topics.Requests,
+				Partition: 0,
+				Offset:    20,
+				Key:       []byte(req.AttemptID),
+				Value:     payload,
+				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+				Time:      req.CreatedAt.Add(-2 * time.Second),
+			},
+		},
+	}
+	producer := &pipelineProducer{}
+	store := storage.NewMemoryRunStore()
+	metrics := observability.NewSchedulerMetrics()
+
+	var logs bytes.Buffer
+	logger := observability.NewLogger("debug", "json", &logs)
+	worker, err := app.NewWorkerWithDeps(cfg, logger, app.WorkerDeps{
+		Consumer: consumer,
+		Producer: producer,
+		RunStore: store,
+		Metrics:  metrics,
+	})
+	if err != nil {
+		t.Errorf("new worker with deps: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Errorf("start worker: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = worker.Shutdown(shutdownCtx)
+	})
+
+	if err := worker.ProcessOnce(ctx); err != nil {
+		t.Errorf("process Go request once: %v", err)
+		return
+	}
+
+	if len(consumer.committed) != 1 {
+		t.Errorf("expected Go request commit, got %d", len(consumer.committed))
+	}
+	if len(producer.messages) != 1 {
+		t.Errorf("expected one Go result message, got %d", len(producer.messages))
+		return
+	}
+
+	result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+	if err != nil {
+		t.Errorf("decode Go result: %v", err)
+		return
+	}
+	if result.Status != contracts.StatusPassed {
+		t.Errorf("expected Go result passed, got %q", result.Status)
+	}
+	if result.Language.ID != "go" {
+		t.Errorf("expected Go result language, got %#v", result.Language)
+	}
+
+	snapshot := metrics.Snapshot()
+	if snapshot.ResultLanguages["go"] != 1 {
+		t.Errorf("expected Go result metric, got %#v", snapshot.ResultLanguages)
+	}
+	if snapshot.ExecutorLatencyByLanguage["go"].Count != 1 {
+		t.Errorf("expected Go executor latency metric, got %#v", snapshot.ExecutorLatencyByLanguage)
+	}
+}
+
 func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "pipeline-artifact-worker-test"
@@ -876,6 +971,36 @@ func validPipelineRunRequest() contracts.RunRequest {
 		TraceID:   "trace-pipeline",
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+func validPipelineGoRunRequest() contracts.RunRequest {
+	req := validPipelineRunRequest()
+	req.SubmissionID = "55555555-5555-4555-8555-555555555555"
+	req.AttemptID = "66666666-6666-4666-8666-666666666666"
+	req.Language = contracts.LanguageSpec{ID: "go", Version: "1.26"}
+	req.Code = contracts.CodeSpec{
+		Entrypoint: "solution.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution.go",
+				ContentB64: base64.StdEncoding.EncodeToString([]byte("package solution\n\nfunc Add(a, b int) int { return a + b }\n")),
+			},
+		},
+	}
+	req.Tests = contracts.TestSpec{
+		Mode:       contracts.TestModeGoTest,
+		Source:     contracts.TestSourceInline,
+		Entrypoint: "solution_test.go",
+		Files: []contracts.SourceFile{
+			{
+				Path:       "solution_test.go",
+				ContentB64: base64.StdEncoding.EncodeToString([]byte("package solution\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(1, 2); got != 3 {\n\t\tt.Errorf(\"Add() = %d\", got)\n\t}\n}\n")),
+			},
+		},
+	}
+	req.TraceID = "trace-pipeline-go"
+	req.CreatedAt = time.Now().UTC()
+	return req
 }
 
 func objectStorageTestProvider(t *testing.T) (testsources.TestSourceProvider, string) {

@@ -151,7 +151,7 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["pytest"]
+          "enum": ["pytest", "go-test"]
         },
         "source": {
           "const": "inline"
@@ -180,7 +180,7 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["pytest"]
+          "enum": ["pytest", "go-test"]
         },
         "source": {
           "const": "object_storage"

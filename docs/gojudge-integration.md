@@ -33,7 +33,10 @@ go-judge returns one result item for the single command. The executor collects:
 - `memory` bytes -> `MemoryPeakBytes`
 - `exitStatus -> ExitCode`
 
-For Python pytest commands, the raw result is then passed into the Python pytest parser so a normal pytest failure becomes `failed`, not `internal_error`.
+For Python pytest commands, the raw result is passed into the Python pytest
+parser. For Go commands with `tests.mode=go-test`, the raw `go test -json`
+stream is passed into the Go parser. Normal test failures become `failed`, not
+`internal_error`.
 
 ## Status Mapping
 
@@ -61,4 +64,6 @@ $env:GOCACHE = Join-Path (Get-Location) ".gocache"
 go test ./internal/execution/gojudge -run TestLiveGoJudgeRunsPythonPytest
 ```
 
-The live test expects the go-judge runtime to have `python3` and `pytest` available.
+The live Python test expects the go-judge runtime to have `python3` and `pytest`
+available. Go E2E requests require `go1.26`; the local Docker Compose runtime
+image `overmindv/sandbox-gojudge:local` installs both Python and Go.
