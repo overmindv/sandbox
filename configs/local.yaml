@@ -1,0 +1,147 @@
+schema_version: sandbox.config.v1
+
+app:
+  name: sandbox-worker
+  environment: local
+  worker_id: ${SANDBOX_WORKER_ID:-sandbox-worker-local-1}
+  shutdown_timeout_ms: 15000
+
+config:
+  languages_file: configs/languages.yaml
+  limits_file: configs/limits.yaml
+  gojudge_mount_file: configs/gojudge-mount.yaml
+
+server:
+  health_addr: 0.0.0.0:8080
+  metrics_addr: 0.0.0.0:9090
+
+feature_flags:
+  fake_executor: true
+  gojudge_executor: false
+  inline_tests: true
+  object_storage_tests: false
+  object_storage_artifacts: true
+
+kafka:
+  brokers:
+    - localhost:29092
+  client_id: sandbox-worker-local
+  group_id: sandbox-code-execution-v1
+  topics:
+    requests: code-execution.requests.v1
+    retry: code-execution.retry.v1
+    events: code-execution.events.v1
+    results: code-execution.results.v1
+    deadletter: code-execution.deadletter.v1
+  consumer:
+    auto_offset_reset: earliest
+    session_timeout_ms: 30000
+    heartbeat_interval_ms: 3000
+    max_poll_records: 16
+    commit_after_result_publish: true
+  producer:
+    acks: all
+    idempotent: true
+    compression: zstd
+    linger_ms: 5
+    request_timeout_ms: 10000
+  retry:
+    enabled: true
+    max_attempts: 3
+    initial_backoff_ms: 500
+    max_backoff_ms: 30000
+    backoff_multiplier: 2
+    early_retry_sleep_cap_ms: 5000
+
+scheduler:
+  max_in_flight: 4
+  job_timeout_ms: 10000
+  max_in_flight_per_language:
+    python: 4
+  queue:
+    policy: bounded_fifo
+    max_depth: 16
+    enqueue_timeout_ms: 100
+  admission:
+    reject_when_executor_unhealthy: true
+    max_queue_age_ms: 300000
+
+executor:
+  type: fake
+  client_timeout_ms: 10000
+  fake:
+    default_status: passed
+    latency_ms: 50
+    echo_request_metadata: true
+  gojudge:
+    base_url: http://localhost:5050
+    request_timeout_ms: 10000
+    max_idle_connections: 8
+
+tests:
+  inline:
+    enabled: true
+    max_files: 16
+    max_total_bytes: 524288
+  object_storage:
+    enabled: false
+    provider: disabled
+    bucket: ""
+    endpoint: ""
+    region: ""
+    access_key_id: ""
+    secret_access_key: ""
+    key_prefix: sandbox-tests
+    cache_ttl_ms: 0
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: true
+
+storage:
+  type: memory
+  postgres:
+    dsn: ""
+    max_open_connections: 5
+    max_idle_connections: 2
+  artifacts:
+    enabled: true
+    provider: filesystem
+    bucket: ""
+    endpoint: ""
+    region: ""
+    access_key_id: ""
+    secret_access_key: ""
+    root_dir: .sandbox-artifacts
+    key_prefix: sandbox-artifacts
+    inline_max_bytes: 4096
+    max_bytes: 1048576
+    request_timeout_ms: 10000
+    force_path_style: true
+  retention:
+    completed_runs_days: 7
+    artifacts_days: 7
+    published_outbox_days: 3
+    failed_outbox_days: 30
+    idempotency_keys_days: 30
+    worker_heartbeat_stale_ms: 120000
+
+security:
+  network:
+    allow_user_code_network: false
+    deny_metadata_endpoints: true
+  filesystem:
+    allow_absolute_paths: false
+    allow_parent_segments: false
+    allow_symlinks: false
+    max_files: 64
+  logs:
+    redact_secrets: true
+    max_stdout_bytes: 32768
+    max_stderr_bytes: 32768
+
+observability:
+  log_level: debug
+  log_format: console
+  metrics_enabled: true
+  tracing_enabled: false
+  audit_enabled: true

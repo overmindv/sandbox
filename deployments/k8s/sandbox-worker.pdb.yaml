@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sandbox-worker
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/name: sandbox-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: overmindv-sandbox
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-worker
+      app.kubernetes.io/component: worker

@@ -1,0 +1,71 @@
+schema_version: sandbox.limits.v1
+
+global:
+  request_max_bytes: 2097152
+  file_content_max_bytes: 1048576
+  source_files_max_count: 32
+  test_files_max_count: 32
+  metadata_max_properties: 32
+
+hard_max:
+  cpu_ms: 30000
+  wall_ms: 60000
+  memory_mb: 1024
+  pids: 256
+  stdout_bytes: 1048576
+  stderr_bytes: 1048576
+  workspace_bytes: 10485760
+
+profiles:
+  default:
+    cpu_ms: 2000
+    wall_ms: 5000
+    memory_mb: 128
+    pids: 32
+    stdout_bytes: 32768
+    stderr_bytes: 32768
+    workspace_bytes: 1048576
+
+  python-default:
+    cpu_ms: 2000
+    wall_ms: 5000
+    memory_mb: 128
+    pids: 32
+    stdout_bytes: 32768
+    stderr_bytes: 32768
+    workspace_bytes: 1048576
+
+  compiled-default:
+    cpu_ms: 5000
+    wall_ms: 15000
+    memory_mb: 256
+    pids: 64
+    stdout_bytes: 32768
+    stderr_bytes: 32768
+    workspace_bytes: 5242880
+
+  go-default:
+    cpu_ms: 10000
+    wall_ms: 30000
+    memory_mb: 512
+    pids: 64
+    stdout_bytes: 32768
+    stderr_bytes: 32768
+    workspace_bytes: 5242880
+
+  heavy:
+    cpu_ms: 10000
+    wall_ms: 30000
+    memory_mb: 512
+    pids: 128
+    stdout_bytes: 65536
+    stderr_bytes: 65536
+    workspace_bytes: 10485760
+
+policy:
+  request_limits_may_only_decrease_defaults: false
+  clamp_to_hard_max: true
+  reject_when_wall_less_than_cpu: true
+  reject_zero_memory: true
+  reject_zero_pids: true
+  truncate_output_on_limit: true

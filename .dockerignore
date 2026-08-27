@@ -1,0 +1,12 @@
+.git
+.gocache
+.tmp
+.env
+.env.local
+tmp
+coverage.out
+*.log
+*.test
+dist
+build
+node_modules

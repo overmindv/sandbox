@@ -1,0 +1,139 @@
+asyncapi: 3.0.0
+info:
+  title: Overmind Sandbox Kafka API
+  version: 1.0.0
+  description: Kafka contracts for sandbox code execution requests, lifecycle events, results, and dead-letter messages.
+defaultContentType: application/json
+servers:
+  local:
+    host: localhost:29092
+    protocol: kafka
+channels:
+  codeExecutionRequestsV1:
+    address: code-execution.requests.v1
+    messages:
+      SandboxRunRequest:
+        $ref: '#/components/messages/SandboxRunRequest'
+  codeExecutionRetryV1:
+    address: code-execution.retry.v1
+    messages:
+      SandboxRunRequest:
+        $ref: '#/components/messages/SandboxRunRequest'
+  codeExecutionEventsV1:
+    address: code-execution.events.v1
+    messages:
+      SandboxRunEvent:
+        $ref: '#/components/messages/SandboxRunEvent'
+  codeExecutionResultsV1:
+    address: code-execution.results.v1
+    messages:
+      SandboxRunResult:
+        $ref: '#/components/messages/SandboxRunResult'
+  codeExecutionDeadletterV1:
+    address: code-execution.deadletter.v1
+    messages:
+      SandboxRunDeadletter:
+        $ref: '#/components/messages/SandboxRunDeadletter'
+operations:
+  consumeRunRequests:
+    action: receive
+    channel:
+      $ref: '#/channels/codeExecutionRequestsV1'
+    messages:
+      - $ref: '#/channels/codeExecutionRequestsV1/messages/SandboxRunRequest'
+  publishRunEvents:
+    action: send
+    channel:
+      $ref: '#/channels/codeExecutionEventsV1'
+    messages:
+      - $ref: '#/channels/codeExecutionEventsV1/messages/SandboxRunEvent'
+  publishRunRetry:
+    action: send
+    channel:
+      $ref: '#/channels/codeExecutionRetryV1'
+    messages:
+      - $ref: '#/channels/codeExecutionRetryV1/messages/SandboxRunRequest'
+  publishRunResults:
+    action: send
+    channel:
+      $ref: '#/channels/codeExecutionResultsV1'
+    messages:
+      - $ref: '#/channels/codeExecutionResultsV1/messages/SandboxRunResult'
+  publishRunDeadletter:
+    action: send
+    channel:
+      $ref: '#/channels/codeExecutionDeadletterV1'
+    messages:
+      - $ref: '#/channels/codeExecutionDeadletterV1/messages/SandboxRunDeadletter'
+components:
+  messages:
+    SandboxRunRequest:
+      name: SandboxRunRequest
+      title: Sandbox run request v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/solutionKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.request.v1.json'
+    SandboxRunEvent:
+      name: SandboxRunEvent
+      title: Sandbox run event v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/solutionKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.event.v1.json'
+    SandboxRunResult:
+      name: SandboxRunResult
+      title: Sandbox run result v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/solutionKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.result.v1.json'
+    SandboxRunDeadletter:
+      name: SandboxRunDeadletter
+      title: Sandbox run dead-letter v1
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/solutionKeyed'
+      payload:
+        $ref: './schemas/sandbox.run.deadletter.v1.json'
+    SandboxTestSuite:
+      name: SandboxTestSuite
+      title: Sandbox test suite v1
+      contentType: application/json
+      payload:
+        $ref: './schemas/sandbox.testsuite.v1.json'
+  messageTraits:
+    solutionKeyed:
+      headers:
+        type: object
+        additionalProperties: false
+        properties:
+          x-trace-id:
+            type: string
+          x-schema-version:
+            type: string
+          x-producer:
+            type: string
+          x-retry-count:
+            type: string
+          x-retry-reason:
+            type: string
+          x-retry-error-class:
+            type: string
+          x-retry-not-before:
+            type: string
+            format: date-time
+          x-original-topic:
+            type: string
+          x-original-partition:
+            type: string
+          x-original-offset:
+            type: string
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: submission_id encoded as UTF-8.

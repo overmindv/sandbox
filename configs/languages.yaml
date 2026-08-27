@@ -1,0 +1,152 @@
+schema_version: sandbox.languages.v1
+
+defaults:
+  language_id: python
+  version: "3.12"
+  test_mode: pytest
+  limits_profile: python-default
+
+languages:
+  - id: python
+    display_name: Python
+    enabled: true
+    adapter: python
+    versions:
+      - version: "3.12"
+        default: true
+        runtime_image: overmindv/sandbox-python:3.12
+        limits_profile: python-default
+        test_modes:
+          - pytest
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .py
+            - .txt
+            - .json
+          default_entrypoint: solution.py
+          default_test_entrypoint: test_solution.py
+        execution:
+          kind: interpreted
+          working_dir: /workspace
+          command:
+            argv:
+              - python3
+              - -m
+              - pytest
+              - -q
+              - --disable-warnings
+              - --tb=short
+              - -p
+              - _sandbox_pytest_plugin
+          environment:
+            PYTHONDONTWRITEBYTECODE: "1"
+            PYTHONHASHSEED: "0"
+            PYTHONUNBUFFERED: "1"
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+
+  - id: javascript
+    display_name: JavaScript
+    enabled: false
+    adapter: javascript
+    versions:
+      - version: "22"
+        default: true
+        runtime_image: overmindv/sandbox-javascript:22
+        limits_profile: default
+        test_modes:
+          - node
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .js
+            - .mjs
+            - .json
+          default_entrypoint: solution.js
+          default_test_entrypoint: test_solution.js
+        execution:
+          kind: interpreted
+          working_dir: /workspace
+          command:
+            argv:
+              - node
+              - test_solution.js
+          environment: {}
+
+  - id: go
+    display_name: Go
+    enabled: true
+    adapter: go
+    versions:
+      - version: "1.26"
+        default: true
+        runtime_image: overmindv/sandbox-go:1.26
+        limits_profile: go-default
+        test_modes:
+          - go-test
+        file_policy:
+          max_files: 64
+          allowed_extensions:
+            - .go
+            - .mod
+            - .sum
+          default_entrypoint: solution.go
+          default_test_entrypoint: solution_test.go
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - /usr/local/go/bin/go
+              - test
+              - -json
+              - -p
+              - "1"
+              - ./...
+          environment:
+            CGO_ENABLED: "0"
+            GOCACHE: /tmp/go-build
+            GOMODCACHE: /tmp/go-mod
+            GOMAXPROCS: "2"
+            GOTOOLCHAIN: local
+            GOPROXY: "off"
+            PATH: /usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+
+  - id: cpp
+    display_name: C++
+    enabled: false
+    adapter: cpp
+    versions:
+      - version: "17"
+        default: true
+        runtime_image: overmindv/sandbox-cpp:17
+        limits_profile: compiled-default
+        test_modes:
+          - executable
+        file_policy:
+          max_files: 64
+          allowed_extensions:
+            - .cpp
+            - .hpp
+            - .h
+            - .txt
+          default_entrypoint: solution.cpp
+          default_test_entrypoint: test_solution.cpp
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          compile:
+            argv:
+              - g++
+              - -std=c++17
+              - -O2
+              - -pipe
+              - -static
+              - -s
+              - test_solution.cpp
+              - -o
+              - test_solution
+          command:
+            argv:
+              - ./test_solution
+          environment: {}
