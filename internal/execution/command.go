@@ -34,12 +34,15 @@ type ExecutionCommand struct {
 	TestEntrypoint string
 	TestMode       contracts.TestMode
 	TestSource     contracts.TestSource
-	Files          []ExecutionFile
-	Limits         contracts.Limits
-	RuntimeLimits  RuntimeLimits
-	Metadata       map[string]any
-	TraceID        string
-	CreatedAt      time.Time
+	// Mode задаёт режим исполнения: "execution" (чистый прогон по входам) или пусто (pytest/go-test).
+	Mode          string
+	Inputs        []string
+	Files         []ExecutionFile
+	Limits        contracts.Limits
+	RuntimeLimits RuntimeLimits
+	Metadata      map[string]any
+	TraceID       string
+	CreatedAt     time.Time
 }
 
 type RuntimeLimits struct {
@@ -58,7 +61,18 @@ type ExecutionFile struct {
 	Content []byte
 }
 
+// IsExecutionMode сообщает, что команда исполняется в режиме чистого прогона.
+func IsExecutionMode(command ExecutionCommand) bool {
+	return command.Mode == contracts.ExecutionMode
+}
+
 func CommandFromRunRequest(req contracts.RunRequest) (ExecutionCommand, error) {
+	mode := ""
+	var inputs []string
+	if req.Execution != nil {
+		mode = req.Execution.Mode
+		inputs = req.Execution.Inputs
+	}
 	files := make([]ExecutionFile, 0, len(req.Code.Files)+len(req.Tests.Files))
 	for _, file := range req.Code.Files {
 		decoded, err := decodeContent(file.ContentB64)
@@ -94,6 +108,8 @@ func CommandFromRunRequest(req contracts.RunRequest) (ExecutionCommand, error) {
 		TestEntrypoint: req.Tests.Entrypoint,
 		TestMode:       req.Tests.Mode,
 		TestSource:     req.Tests.Source,
+		Mode:           mode,
+		Inputs:         inputs,
 		Files:          files,
 		Limits:         req.Limits,
 		RuntimeLimits:  RuntimeLimitsFromRequest(req.Limits),

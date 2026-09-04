@@ -5,25 +5,43 @@ import "time"
 const RunResultSchemaVersion = "sandbox.run.result.v1"
 
 type RunResult struct {
-	SchemaVersion string           `json:"schema_version"`
-	SubmissionID  string           `json:"submission_id"`
-	AttemptID     string           `json:"attempt_id"`
-	UserID        string           `json:"user_id,omitempty"`
-	TaskID        string           `json:"task_id,omitempty"`
-	Language      LanguageSpec     `json:"language,omitempty"`
-	Status        ExecutionStatus  `json:"status"`
-	Summary       ResultSummary    `json:"summary"`
-	Timing        ResultTiming     `json:"timing"`
-	Resources     ResultResources  `json:"resources"`
-	Logs          ResultLogs       `json:"logs"`
-	Tests         []TestCaseResult `json:"tests,omitempty"`
-	Error         *RunError        `json:"error"`
-	TraceID       string           `json:"trace_id,omitempty"`
-	WorkerID      string           `json:"worker_id,omitempty"`
-	CreatedAt     time.Time        `json:"created_at"`
+	SchemaVersion string                `json:"schema_version"`
+	SubmissionID  string                `json:"submission_id"`
+	AttemptID     string                `json:"attempt_id"`
+	UserID        string                `json:"user_id,omitempty"`
+	TaskID        string                `json:"task_id,omitempty"`
+	Language      LanguageSpec          `json:"language,omitempty"`
+	Status        ExecutionStatus       `json:"status"`
+	Summary       ResultSummary         `json:"summary"`
+	Timing        ResultTiming          `json:"timing"`
+	Resources     ResultResources       `json:"resources"`
+	Logs          ResultLogs            `json:"logs"`
+	Tests         []TestCaseResult      `json:"tests,omitempty"`
+	Cases         []CaseExecutionResult `json:"cases,omitempty"`
+	Error         *RunError             `json:"error"`
+	TraceID       string                `json:"trace_id,omitempty"`
+	WorkerID      string                `json:"worker_id,omitempty"`
+	CreatedAt     time.Time             `json:"created_at"`
+}
+
+// CaseExecutionResult описывает результат исполнения одного входного кейса в
+// execution-режиме: вывод, мета-данные и статус исполнения без сравнения с эталоном.
+type CaseExecutionResult struct {
+	Index           int     `json:"index"`
+	Stdout          string  `json:"stdout"`
+	Stderr          string  `json:"stderr"`
+	Truncated       bool    `json:"truncated"`
+	ExitCode        *int    `json:"exit_code"`
+	Signal          *string `json:"signal"`
+	CPUms           int     `json:"cpu_ms,omitempty"`
+	MemoryPeakBytes int64   `json:"memory_peak_bytes,omitempty"`
+	DurationMS      int     `json:"duration_ms,omitempty"`
+	Status          string  `json:"status"`
 }
 
 type ResultSummary struct {
+	CasesTotal      int    `json:"cases_total,omitempty"`
+	CasesWithError  int    `json:"cases_with_error,omitempty"`
 	TestsTotal      int    `json:"tests_total"`
 	TestsPassed     int    `json:"tests_passed"`
 	TestsFailed     int    `json:"tests_failed"`

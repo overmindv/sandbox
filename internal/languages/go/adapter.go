@@ -33,6 +33,10 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 		return execution.ExecutionCommand{}, err
 	}
 
+	if req.Execution != nil && req.Execution.Mode == contracts.ExecutionMode {
+		return buildExecutionCommand(req, resolved)
+	}
+
 	command, err := execution.CommandFromRunRequest(req)
 	if err != nil {
 		return execution.ExecutionCommand{}, err
@@ -58,6 +62,24 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 		command.TestEntrypoint = DefaultTestEntrypoint
 	}
 	command.Argv = GoTestArgv(resolved.Version.Execution.Command.Argv)
+	command.Files = buildWorkspaceFiles(command.Files)
+	command.RuntimeLimits = execution.RuntimeLimitsFromRequest(req.Limits)
+	return command, nil
+}
+
+// buildExecutionCommand строит команду исполнения go-программы по входным кейсам.
+// mode=execution запускает пакет через "go run ." вместо go test.
+func buildExecutionCommand(req contracts.RunRequest, resolved languages.ResolvedLanguage) (execution.ExecutionCommand, error) {
+	command, err := execution.CommandFromRunRequest(req)
+	if err != nil {
+		return execution.ExecutionCommand{}, err
+	}
+
+	command.Adapter = AdapterName
+	command.RuntimeImage = resolved.Version.RuntimeImage
+	command.WorkingDir = resolved.Version.Execution.WorkingDir
+	command.Environment = cloneStringMap(resolved.Version.Execution.Environment)
+	command.Argv = []string{"go", "run", "."}
 	command.Files = buildWorkspaceFiles(command.Files)
 	command.RuntimeLimits = execution.RuntimeLimitsFromRequest(req.Limits)
 	return command, nil

@@ -27,6 +27,10 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 		return execution.ExecutionCommand{}, err
 	}
 
+	if req.Execution != nil && req.Execution.Mode == contracts.ExecutionMode {
+		return buildExecutionCommand(req, resolved)
+	}
+
 	command, err := execution.CommandFromRunRequest(req)
 	if err != nil {
 		return execution.ExecutionCommand{}, err
@@ -55,6 +59,31 @@ func (a *Adapter) BuildCommand(ctx context.Context, req contracts.RunRequest, re
 	command.Environment["SANDBOX_PYTEST_REPORT"] = ReportPath
 	command.CopyOut = []string{ReportPath}
 	command.Files = buildWorkspaceFiles(command.Files)
+	command.RuntimeLimits = MapLimits(req.Limits)
+	return command, nil
+}
+
+// buildExecutionCommand строит команду исполнения программы по списку входных кейсов.
+// В mode=execution тест-файлы и pytest-отчёт не нужны: программа запускается напрямую.
+func buildExecutionCommand(req contracts.RunRequest, resolved languages.ResolvedLanguage) (execution.ExecutionCommand, error) {
+	command, err := execution.CommandFromRunRequest(req)
+	if err != nil {
+		return execution.ExecutionCommand{}, err
+	}
+
+	command.Adapter = AdapterName
+	command.RuntimeImage = resolved.Version.RuntimeImage
+	command.WorkingDir = resolved.Version.Execution.WorkingDir
+	command.Environment = cloneStringMap(resolved.Version.Execution.Environment)
+	delete(command.Environment, "SANDBOX_PYTEST_REPORT")
+	if command.Entrypoint == "" {
+		command.Entrypoint = resolved.Version.FilePolicy.DefaultEntrypoint
+	}
+	if command.Entrypoint == "" {
+		command.Entrypoint = DefaultEntrypoint
+	}
+	command.Argv = []string{"python3", command.Entrypoint}
+	command.Files = append([]execution.ExecutionFile(nil), command.Files...)
 	command.RuntimeLimits = MapLimits(req.Limits)
 	return command, nil
 }

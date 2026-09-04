@@ -6,6 +6,7 @@ const (
 	StatusQueued              ExecutionStatus = "queued"
 	StatusRunning             ExecutionStatus = "running"
 	StatusPassed              ExecutionStatus = "passed"
+	StatusOK                  ExecutionStatus = "ok"
 	StatusFailed              ExecutionStatus = "failed"
 	StatusCompileError        ExecutionStatus = "compile_error"
 	StatusRuntimeError        ExecutionStatus = "runtime_error"
@@ -22,6 +23,7 @@ func (s ExecutionStatus) Valid() bool {
 	case StatusQueued,
 		StatusRunning,
 		StatusPassed,
+		StatusOK,
 		StatusFailed,
 		StatusCompileError,
 		StatusRuntimeError,

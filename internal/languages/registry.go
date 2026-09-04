@@ -76,7 +76,36 @@ func (r *Registry) Resolve(spec contracts.LanguageSpec, mode contracts.TestMode)
 	return resolved, adapter, nil
 }
 
+// ResolveForExecution разрешает язык для execution-режима, не требуя test-mode.
+func (r *Registry) ResolveForExecution(spec contracts.LanguageSpec) (ResolvedLanguage, LanguageAdapter, error) {
+	if r == nil {
+		return ResolvedLanguage{}, nil, fmt.Errorf("%w: registry is nil", ErrUnsupportedLanguage)
+	}
+
+	language, ok := r.findLanguage(spec.ID)
+	if !ok || !language.Enabled {
+		return ResolvedLanguage{}, nil, UnsupportedLanguageError{LanguageID: spec.ID, Version: spec.Version, Reason: "language is not enabled"}
+	}
+	version, ok := findVersion(language, spec.Version)
+	if !ok {
+		return ResolvedLanguage{}, nil, UnsupportedLanguageError{LanguageID: spec.ID, Version: spec.Version, Reason: "version is not enabled"}
+	}
+	adapter, ok := r.adapters[language.Adapter]
+	if !ok {
+		return ResolvedLanguage{}, nil, UnsupportedLanguageError{LanguageID: spec.ID, Version: version.Version, Reason: fmt.Sprintf("adapter %q is missing", language.Adapter)}
+	}
+
+	return ResolvedLanguage{Language: language, Version: version}, adapter, nil
+}
+
 func (r *Registry) BuildCommand(ctx context.Context, req contracts.RunRequest) (execution.ExecutionCommand, error) {
+	if req.Execution != nil && req.Execution.Mode == contracts.ExecutionMode {
+		resolved, adapter, err := r.ResolveForExecution(req.Language)
+		if err != nil {
+			return execution.ExecutionCommand{}, err
+		}
+		return adapter.BuildCommand(ctx, req, resolved)
+	}
 	resolved, adapter, err := r.Resolve(req.Language, req.Tests.Mode)
 	if err != nil {
 		return execution.ExecutionCommand{}, err

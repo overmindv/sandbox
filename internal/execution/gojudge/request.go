@@ -75,8 +75,35 @@ func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, e
 		copyOut = append(copyOut, optionalCopyOut(normalized))
 	}
 
-	stdin := ""
-	cmd := Command{
+	copyOutMax := command.RuntimeLimits.WorkspaceBytes
+	if copyOutMax <= 0 {
+		copyOutMax = 1024 * 1024
+	}
+
+	if execution.IsExecutionMode(command) {
+		if len(command.Inputs) == 0 {
+			return Request{}, fmt.Errorf("%w: execution mode requires at least one input", execution.ErrInvalidCommandPayload)
+		}
+		cmds := make([]Command, 0, len(command.Inputs))
+		for _, input := range command.Inputs {
+			cmds = append(cmds, baseCommand(command, copyIn, copyOut, copyOutMax, input))
+		}
+
+		return Request{
+			RequestID: command.AttemptID,
+			Cmd:       cmds,
+		}, nil
+	}
+
+	return Request{
+		RequestID: command.AttemptID,
+		Cmd:       []Command{baseCommand(command, copyIn, copyOut, copyOutMax, "")},
+	}, nil
+}
+
+// baseCommand строит одну go-judge команду с заданным stdin.
+func baseCommand(command execution.ExecutionCommand, copyIn map[string]MemoryFile, copyOut []string, copyOutMax int64, stdin string) Command {
+	return Command{
 		Args: append([]string(nil), command.Argv...),
 		Env:  environment(command.Environment),
 		Files: []FileDescriptor{
@@ -90,17 +117,9 @@ func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, e
 		ProcLimit:       command.RuntimeLimits.PIDs,
 		CopyIn:          copyIn,
 		CopyOut:         copyOut,
-		CopyOutMax:      command.RuntimeLimits.WorkspaceBytes,
+		CopyOutMax:      copyOutMax,
 		CopyOutTruncate: false,
 	}
-	if cmd.CopyOutMax <= 0 {
-		cmd.CopyOutMax = 1024 * 1024
-	}
-
-	return Request{
-		RequestID: command.AttemptID,
-		Cmd:       []Command{cmd},
-	}, nil
 }
 
 func environment(values map[string]string) []string {

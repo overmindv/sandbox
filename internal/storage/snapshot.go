@@ -140,6 +140,10 @@ func runFileRecord(runID string, kind RunFileKind, file contracts.SourceFile, cr
 }
 
 func buildRunTests(runID string, req contracts.RunRequest, createdAt time.Time) ([]RunTestRecord, error) {
+	// Execution-режим не использует тест-файлы: снапшот хранит только входные кейсы.
+	if req.Execution != nil && req.Execution.Mode == contracts.ExecutionMode {
+		return nil, nil
+	}
 	switch req.Tests.Source {
 	case contracts.TestSourceInline:
 		records := make([]RunTestRecord, 0, len(req.Tests.Files))

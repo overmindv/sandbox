@@ -48,11 +48,55 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 		}
 	}
 
+	if execution.IsExecutionMode(command) {
+		return fakeExecutionModeResult(command, e.defaultStatus), nil
+	}
+
 	status, err := e.statusFor(command)
 	if err != nil {
 		return execution.ExecutionResult{}, err
 	}
 	return resultForStatus(status, command), nil
+}
+
+// fakeExecutionModeResult имитирует исполнение по входным кейсам без реального рантайма:
+// для каждого входа возвращается кейс с эхом входа в stdout и мета-данными.
+func fakeExecutionModeResult(command execution.ExecutionCommand, defaultStatus contracts.ExecutionStatus) execution.ExecutionResult {
+	caseStatus := contracts.StatusOK
+	switch defaultStatus {
+	case contracts.StatusTimeLimitExceeded:
+		caseStatus = contracts.StatusTimeLimitExceeded
+	case contracts.StatusMemoryLimitExceeded:
+		caseStatus = contracts.StatusMemoryLimitExceeded
+	case contracts.StatusFailed, contracts.StatusRuntimeError:
+		caseStatus = contracts.StatusRuntimeError
+	case contracts.StatusPassed, contracts.StatusOK, "":
+		caseStatus = contracts.StatusOK
+	}
+
+	cases := make([]execution.ExecutionCaseResult, 0, len(command.Inputs))
+	overall := contracts.StatusOK
+	exitCode := 0
+	for _, input := range command.Inputs {
+		run := execution.ExecutionCaseResult{
+			Stdout:          input,
+			ExitCode:        &exitCode,
+			CPUms:           1,
+			MemoryPeakBytes: 8 * 1024 * 1024,
+			DurationMS:      1,
+			Status:          caseStatus,
+		}
+		if caseStatus != contracts.StatusOK {
+			overall = caseStatus
+		}
+		cases = append(cases, run)
+	}
+
+	return execution.ExecutionResult{
+		Status:          overall,
+		Cases:           cases,
+		MemoryPeakBytes: 8 * 1024 * 1024,
+	}
 }
 
 func (e *Executor) Healthy() bool {

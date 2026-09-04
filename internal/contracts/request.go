@@ -2,7 +2,12 @@ package contracts
 
 import "time"
 
-const RunRequestSchemaVersion = "sandbox.run.request.v1"
+const (
+	RunRequestSchemaVersion = "sandbox.run.request.v1"
+	// ExecutionMode включает режим чистого исполнения: код прогоняется по каждому
+	// входному кейсу, возвращается вывод и мета-данные без сравнения с эталоном.
+	ExecutionMode = "execution"
+)
 
 type RunRequest struct {
 	SchemaVersion string         `json:"schema_version"`
@@ -12,11 +17,19 @@ type RunRequest struct {
 	TaskID        string         `json:"task_id"`
 	Language      LanguageSpec   `json:"language"`
 	Code          CodeSpec       `json:"code"`
-	Tests         TestSpec       `json:"tests"`
+	Tests         TestSpec       `json:"tests,omitempty"`
+	Execution     *ExecutionSpec `json:"execution,omitempty"`
 	Limits        Limits         `json:"limits"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
 	TraceID       string         `json:"trace_id"`
 	CreatedAt     time.Time      `json:"created_at"`
+}
+
+// ExecutionSpec описывает режим чистого исполнения: список входных кейсов,
+// которые подаются в stdin программы по одному на запуск.
+type ExecutionSpec struct {
+	Mode   string   `json:"mode"`
+	Inputs []string `json:"inputs"`
 }
 
 type LanguageSpec struct {

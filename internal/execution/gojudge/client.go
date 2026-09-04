@@ -202,6 +202,12 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	if err := ValidateResponse(results); err != nil {
 		return execution.ExecutionResult{}, fmt.Errorf("%w: %v", ErrInfrastructure, err)
 	}
+	if execution.IsExecutionMode(command) {
+		if err := ValidateExecutionBatch(results, len(command.Inputs)); err != nil {
+			return execution.ExecutionResult{}, fmt.Errorf("%w: %v", ErrInfrastructure, err)
+		}
+		return ExecutionResultFromResponseBatch(command, results), nil
+	}
 	return ExecutionResultFromResponse(command, results[0]), nil
 }
 

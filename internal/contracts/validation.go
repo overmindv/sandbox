@@ -106,7 +106,11 @@ func ValidateRunRequestWithOptions(req RunRequest, opts ValidationOptions) error
 		validateSafePath(&errs, "code.entrypoint", req.Code.Entrypoint, opts.MaxPathLength)
 	}
 	validateFiles(&errs, "code.files", req.Code.Files, opts.MaxSourceFiles, opts)
-	validateTests(&errs, req.Tests, opts)
+	if req.Execution != nil && req.Execution.Mode == ExecutionMode {
+		validateExecutionSpec(&errs, req.Execution, opts)
+	} else {
+		validateTests(&errs, req.Tests, opts)
+	}
 	validateLimits(&errs, req.Limits, opts)
 
 	if len(req.Metadata) > opts.MaxMetadataKeys {
@@ -139,6 +143,23 @@ func ValidateRunRequestWithOptions(req RunRequest, opts ValidationOptions) error
 func validateUUID(errs *ValidationErrors, field, value string) {
 	if !uuidPattern.MatchString(value) {
 		errs.add(field, "must be a UUID")
+	}
+}
+
+func validateExecutionSpec(errs *ValidationErrors, spec *ExecutionSpec, opts ValidationOptions) {
+	if spec.Mode != ExecutionMode {
+		errs.add("execution.mode", fmt.Sprintf("must be %q", ExecutionMode))
+	}
+	if len(spec.Inputs) == 0 {
+		errs.add("execution.inputs", "must contain at least one input")
+	}
+	if len(spec.Inputs) > opts.MaxSourceFiles {
+		errs.add("execution.inputs", fmt.Sprintf("must contain at most %d inputs", opts.MaxSourceFiles))
+	}
+	for _, input := range spec.Inputs {
+		if len(input) > opts.MaxFileContentByte {
+			errs.add("execution.inputs", "input exceeds the maximum allowed size")
+		}
 	}
 }
 

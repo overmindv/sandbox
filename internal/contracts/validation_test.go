@@ -44,6 +44,36 @@ func TestValidateRunRequestAcceptsValidInlineGo(t *testing.T) {
 	}
 }
 
+func TestValidateRunRequestAcceptsExecutionModeWithoutTests(t *testing.T) {
+	req := validRunRequest()
+	req.Tests = TestSpec{}
+	req.Execution = &ExecutionSpec{
+		Mode:   ExecutionMode,
+		Inputs: []string{"1", "2", "3"},
+	}
+
+	if err := ValidateRunRequest(req); err != nil {
+		t.Errorf("expected execution request to be valid: %v", err)
+	}
+}
+
+func TestValidateRunRequestRejectsExecutionModeWithoutInputs(t *testing.T) {
+	req := validRunRequest()
+	req.Tests = TestSpec{}
+	req.Execution = &ExecutionSpec{Mode: ExecutionMode}
+
+	if err := ValidateRunRequest(req); err == nil {
+		t.Error("expected execution request without inputs to be rejected")
+	}
+}
+
+func TestValidateRunRequestRejectsExecutionModeMissing(t *testing.T) {
+	req := validRunRequest()
+	if err := ValidateRunRequest(req); err != nil {
+		t.Errorf("expected default test-mode request to still be valid: %v", err)
+	}
+}
+
 func TestValidateRunRequestRejectsUnsafePaths(t *testing.T) {
 	tests := []struct {
 		name string

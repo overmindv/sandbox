@@ -173,3 +173,111 @@ func ValidateResponse(results []Result) error {
 	}
 	return nil
 }
+
+// ValidateExecutionBatch проверяет, что go-judge вернул ровно N результатов исполнения кейсов.
+func ValidateExecutionBatch(results []Result, expected int) error {
+	if len(results) != expected {
+		return fmt.Errorf("go-judge returned %d results, expected %d", len(results), expected)
+	}
+	return nil
+}
+
+// ExecutionResultFromResponseBatch отображает результаты исполнения всех входных кейсов
+// в execution-режиме: вывод и мета-данные каждого кейса без сравнения с эталоном.
+func ExecutionResultFromResponseBatch(command execution.ExecutionCommand, results []Result) execution.ExecutionResult {
+	cases := make([]execution.ExecutionCaseResult, 0, len(results))
+	var memoryPeak int64
+	status := contracts.StatusOK
+	for i, response := range results {
+		run := caseExecutionResult(response, i)
+		if run.Status != contracts.StatusOK && severity(run.Status) > severity(status) {
+			status = run.Status
+		}
+		if run.MemoryPeakBytes > memoryPeak {
+			memoryPeak = run.MemoryPeakBytes
+		}
+		cases = append(cases, run)
+	}
+	result := execution.ExecutionResult{
+		Status:          status,
+		MemoryPeakBytes: memoryPeak,
+		RunMS:           nanosToMillis(results[0].RunTime),
+		Cases:           cases,
+	}
+	if status != contracts.StatusOK {
+		result.Error = &contracts.RunError{Code: caseErrorCode(status), Message: string(status), Retryable: false}
+	}
+	return result
+}
+
+// caseExecutionResult отображает один go-judge результат в доменный результат кейса.
+func caseExecutionResult(response Result, index int) execution.ExecutionCaseResult {
+	exit := response.ExitStatus
+	run := execution.ExecutionCaseResult{
+		Stdout:          response.Files[stdoutName],
+		Stderr:          response.Files[stderrName],
+		Truncated:       response.Status == StatusOutputLimitExceeded,
+		ExitCode:        &exit,
+		CPUms:           nanosToMillis(response.Time),
+		MemoryPeakBytes: response.Memory,
+		DurationMS:      nanosToMillis(response.RunTime),
+		Status:          caseResultStatus(response),
+	}
+	if response.Status == StatusSignalled && response.Error != "" {
+		signal := response.Error
+		run.Signal = &signal
+	}
+	return run
+}
+
+// caseResultStatus сводит go-judge статус к доменному статусу кейса.
+func caseResultStatus(response Result) contracts.ExecutionStatus {
+	switch response.Status {
+	case StatusAccepted:
+		return contracts.StatusOK
+	case StatusTimeLimitExceeded:
+		return contracts.StatusTimeLimitExceeded
+	case StatusMemoryLimitExceeded:
+		return contracts.StatusMemoryLimitExceeded
+	case StatusOutputLimitExceeded:
+		return contracts.StatusOutputLimitExceeded
+	case StatusFileError, StatusInternalError:
+		return contracts.StatusInternalError
+	default: // NonzeroExitStatus, Signalled, DangerousSyscall
+		return contracts.StatusRuntimeError
+	}
+}
+
+// severity задаёт значимость статуса для агрегации: выше — серьёзнее.
+func severity(status contracts.ExecutionStatus) int {
+	switch status {
+	case contracts.StatusTimeLimitExceeded:
+		return 5
+	case contracts.StatusMemoryLimitExceeded:
+		return 4
+	case contracts.StatusOutputLimitExceeded:
+		return 3
+	case contracts.StatusInternalError:
+		return 2
+	case contracts.StatusRuntimeError:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// caseErrorCode возвращает машинный код ошибки агрегированного статуса.
+func caseErrorCode(status contracts.ExecutionStatus) string {
+	switch status {
+	case contracts.StatusTimeLimitExceeded:
+		return "tle"
+	case contracts.StatusMemoryLimitExceeded:
+		return "mle"
+	case contracts.StatusOutputLimitExceeded:
+		return "ole"
+	case contracts.StatusInternalError:
+		return "internal_error"
+	default:
+		return "runtime_error"
+	}
+}
