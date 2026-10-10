@@ -6,8 +6,11 @@ WORKDIR /src
 
 RUN apk add --no-cache ca-certificates
 
+ARG GO_BUILD_PARALLEL=2
+ENV GOFLAGS=-p=${GO_BUILD_PARALLEL}
+
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=overmindv-gomod,target=/go/pkg/mod go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
@@ -15,7 +18,9 @@ COPY configs ./configs
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/sandbox-worker ./cmd/sandbox-worker
+RUN --mount=type=cache,id=overmindv-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=overmindv-gobuild,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/sandbox-worker ./cmd/sandbox-worker
 
 FROM alpine:3.22
 
