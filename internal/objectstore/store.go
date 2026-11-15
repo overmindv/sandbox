@@ -55,6 +55,7 @@ func New(cfg config.ArtifactStorageConfig) (Store, error) {
 		})
 	case "s3":
 		return NewS3Store(S3Config{
+			MaxBytes:         cfg.MaxBytes,
 			Bucket:           cfg.Bucket,
 			Endpoint:         cfg.Endpoint,
 			Region:           cfg.Region,

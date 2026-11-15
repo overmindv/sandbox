@@ -150,6 +150,16 @@ func validateExecutionSpec(errs *ValidationErrors, spec *ExecutionSpec, opts Val
 	if spec.Mode != ExecutionMode {
 		errs.add("execution.mode", fmt.Sprintf("must be %q", ExecutionMode))
 	}
+	if spec.Suite != nil {
+		if len(spec.Inputs) != 0 || spec.Inputs != nil {
+			errs.add("execution", "suite and inputs are mutually exclusive")
+		}
+		ref := spec.Suite
+		if !regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`).MatchString(ref.SuiteID) || ref.Version == "" || len(ref.Version) > 64 || !testRefPattern.MatchString(ref.Version) || ref.Version == "." || ref.Version == ".." || !checksumPattern.MatchString(ref.ChecksumSHA256) {
+			errs.add("execution.suite", "invalid immutable suite reference")
+		}
+		return
+	}
 	if len(spec.Inputs) == 0 {
 		errs.add("execution.inputs", "must contain at least one input")
 	}

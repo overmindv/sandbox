@@ -24,6 +24,7 @@ const (
 )
 
 type S3Config struct {
+	MaxBytes         int
 	Bucket           string
 	Endpoint         string
 	Region           string
@@ -34,6 +35,7 @@ type S3Config struct {
 }
 
 type S3Store struct {
+	maxBytes        int
 	bucket          string
 	endpoint        *url.URL
 	region          string
@@ -73,6 +75,7 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 
 	return &S3Store{
 		bucket:          bucket,
+		maxBytes:        cfg.MaxBytes,
 		endpoint:        endpoint,
 		region:          region,
 		accessKeyID:     strings.TrimSpace(cfg.AccessKeyID),
@@ -170,7 +173,18 @@ func (s *S3Store) Get(ctx context.Context, bucket string, key string) ([]byte, e
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("s3 get object failed: status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return io.ReadAll(resp.Body)
+	limit := s.maxBytes
+	if limit <= 0 {
+		limit = 64 * 1024 * 1024
+	}
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > limit {
+		return nil, fmt.Errorf("object exceeds size limit")
+	}
+	return payload, nil
 }
 
 func (s *S3Store) Close() error {

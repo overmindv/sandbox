@@ -81,6 +81,9 @@ func NewProviderFromConfig(cfg config.TestsConfig) (TestSourceProvider, error) {
 func (r Resolver) Resolve(ctx context.Context, req contracts.RunRequest) (contracts.RunRequest, error) {
 	// Execution-режим не использует тест-файлы: резолв тестовых исходников не нужен.
 	if req.Execution != nil && req.Execution.Mode == contracts.ExecutionMode {
+		if req.Execution.Suite != nil {
+			return r.objectStorage.ResolveInputs(ctx, req)
+		}
 		return req, nil
 	}
 	switch req.Tests.Source {

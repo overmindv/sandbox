@@ -28,8 +28,9 @@ type RunRequest struct {
 // ExecutionSpec описывает режим чистого исполнения: список входных кейсов,
 // которые подаются в stdin программы по одному на запуск.
 type ExecutionSpec struct {
-	Mode   string   `json:"mode"`
-	Inputs []string `json:"inputs"`
+	Mode   string               `json:"mode"`
+	Inputs []string             `json:"inputs,omitempty"`
+	Suite  *InputSuiteReference `json:"suite,omitempty"`
 }
 
 type LanguageSpec struct {
@@ -80,4 +81,10 @@ type Limits struct {
 	StdoutBytes    int `json:"stdout_bytes"`
 	StderrBytes    int `json:"stderr_bytes"`
 	WorkspaceBytes int `json:"workspace_bytes"`
+}
+
+type InputSuiteReference struct {
+	SuiteID        string `json:"suite_id"`
+	Version        string `json:"version"`
+	ChecksumSHA256 string `json:"checksum_sha256"`
 }
