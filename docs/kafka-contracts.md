@@ -189,3 +189,34 @@ Downstream consumers must:
 - Deduplicate by `attempt_id`.
 - Treat result messages as the source of truth.
 - Treat events as non-authoritative progress signals.
+
+## Уточнение v1 — OVM-241
+
+Код и JSON Schema поддерживают stdin-режим `execution.mode=execution` с массивом
+`inputs`, кроме `pytest`/`go-test`. В stdin-режиме `tests` может отсутствовать или
+быть zero-value `{ "mode": "", "source": "" }` после Go-сериализации. Ответ содержит
+`status=ok`, `cases`, `summary.cases_total/cases_with_error`. Это описание уже
+существующего runtime, а не новая версия topic.
+
+Tasks передаёт `metadata.task_version_id` как UUID неизменяемой версии.
+Sandbox сохраняет metadata запроса, но не обязан эхоить её в result: tasks
+связывает результат с сохранённой версией по submission/attempt.
+
+Владелец повторов внутри одного attempt_id — sandbox. Новый запуск после
+terminal result создаёт tasks с новым attempt_id. Текущий requeue tasks пока
+повторно использует ID; исправление/fencing/reaper budget отслеживаются OVM-245.
+Повтор Kafka delivery не является новым исполнением.
+
+При исчерпании retry sandbox возвращает сохранённый terminal result либо
+internal_error и DLQ. Для attempt_in_progress публикуется DLQ без фиктивного
+terminal result активного исполнения.
+
+Важное ограничение предыдущего раздела Compatibility Rules: optional top-level
+поле тоже несовместимо со строгим Go decoder, пока он его не знает. Безопасное
+расширение v1 — существующий scalar metadata; другие расширения требуют проверки
+обоих consumers, breaking changes — нового topic major.
+
+Общие синтетические fixtures находятся в tests/fixtures/execution-contract.
+`python scripts/check_execution_contract.py --peer ../tasks` проверяет JSON Schema
+и совпадение snapshots обеих сторон (зависимости scripts/requirements-contract.txt).
+Go-тест TestSharedExecutionFixtures проверяет реальные decoder и validator.
