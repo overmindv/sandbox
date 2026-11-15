@@ -74,13 +74,14 @@ func RunResultFromExecution(req contracts.RunRequest, execResult ExecutionResult
 	}
 
 	return contracts.RunResult{
-		SchemaVersion: contracts.RunResultSchemaVersion,
-		SubmissionID:  req.SubmissionID,
-		AttemptID:     req.AttemptID,
-		UserID:        req.UserID,
-		TaskID:        req.TaskID,
-		Language:      req.Language,
-		Status:        execResult.Status,
+		SchemaVersion:     contracts.RunResultSchemaVersion,
+		EvaluationContext: contracts.EvaluationContextForRequest(req),
+		SubmissionID:      req.SubmissionID,
+		AttemptID:         req.AttemptID,
+		UserID:            req.UserID,
+		TaskID:            req.TaskID,
+		Language:          req.Language,
+		Status:            execResult.Status,
 		Summary: contracts.ResultSummary{
 			TestsTotal:      execResult.TestsTotal,
 			TestsPassed:     execResult.TestsPassed,
@@ -172,13 +173,14 @@ func executionRunResult(req contracts.RunRequest, execResult ExecutionResult, ti
 	}
 
 	return contracts.RunResult{
-		SchemaVersion: contracts.RunResultSchemaVersion,
-		SubmissionID:  req.SubmissionID,
-		AttemptID:     req.AttemptID,
-		UserID:        req.UserID,
-		TaskID:        req.TaskID,
-		Language:      req.Language,
-		Status:        status,
+		SchemaVersion:     contracts.RunResultSchemaVersion,
+		EvaluationContext: contracts.EvaluationContextForRequest(req),
+		SubmissionID:      req.SubmissionID,
+		AttemptID:         req.AttemptID,
+		UserID:            req.UserID,
+		TaskID:            req.TaskID,
+		Language:          req.Language,
+		Status:            status,
 		Summary: contracts.ResultSummary{
 			CasesTotal:     len(cases),
 			CasesWithError: casesWithError,

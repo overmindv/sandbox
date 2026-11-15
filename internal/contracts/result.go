@@ -5,23 +5,24 @@ import "time"
 const RunResultSchemaVersion = "sandbox.run.result.v1"
 
 type RunResult struct {
-	SchemaVersion string                `json:"schema_version"`
-	SubmissionID  string                `json:"submission_id"`
-	AttemptID     string                `json:"attempt_id"`
-	UserID        string                `json:"user_id,omitempty"`
-	TaskID        string                `json:"task_id,omitempty"`
-	Language      LanguageSpec          `json:"language,omitempty"`
-	Status        ExecutionStatus       `json:"status"`
-	Summary       ResultSummary         `json:"summary"`
-	Timing        ResultTiming          `json:"timing"`
-	Resources     ResultResources       `json:"resources"`
-	Logs          ResultLogs            `json:"logs"`
-	Tests         []TestCaseResult      `json:"tests,omitempty"`
-	Cases         []CaseExecutionResult `json:"cases,omitempty"`
-	Error         *RunError             `json:"error"`
-	TraceID       string                `json:"trace_id,omitempty"`
-	WorkerID      string                `json:"worker_id,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
+	EvaluationContext *EvaluationContext    `json:"evaluation_context,omitempty"`
+	SchemaVersion     string                `json:"schema_version"`
+	SubmissionID      string                `json:"submission_id"`
+	AttemptID         string                `json:"attempt_id"`
+	UserID            string                `json:"user_id,omitempty"`
+	TaskID            string                `json:"task_id,omitempty"`
+	Language          LanguageSpec          `json:"language,omitempty"`
+	Status            ExecutionStatus       `json:"status"`
+	Summary           ResultSummary         `json:"summary"`
+	Timing            ResultTiming          `json:"timing"`
+	Resources         ResultResources       `json:"resources"`
+	Logs              ResultLogs            `json:"logs"`
+	Tests             []TestCaseResult      `json:"tests,omitempty"`
+	Cases             []CaseExecutionResult `json:"cases,omitempty"`
+	Error             *RunError             `json:"error"`
+	TraceID           string                `json:"trace_id,omitempty"`
+	WorkerID          string                `json:"worker_id,omitempty"`
+	CreatedAt         time.Time             `json:"created_at"`
 }
 
 // CaseExecutionResult описывает результат исполнения одного входного кейса в
