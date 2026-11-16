@@ -213,7 +213,7 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 
 	if err := contracts.ValidateRunRequestWithOptions(req, p.ValidationOptions); err != nil {
 		p.Logger.Warn(ctx, "invalid run request", "attempt_id", contracts.SafeUUID(req.AttemptID), "error", err)
-		finishValidate(err, "reason", "invalid_request", "attempt_id", req.AttemptID)
+		finishValidate(err, "reason", "invalid_request", "attempt_id", contracts.SafeUUID(req.AttemptID))
 		return p.publishInvalidRequest(ctx, msg, req, err)
 	}
 	if string(msg.Key) != req.SubmissionID {
