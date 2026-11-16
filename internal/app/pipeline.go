@@ -53,19 +53,20 @@ func (h requestExecutor) HandleJob(ctx context.Context, job scheduler.Job) (any,
 }
 
 type requestPipeline struct {
-	dispatcher *scheduler.Dispatcher
-	producer   kafka.Producer
-	topics     kafka.TopicNames
-	languages  *languages.Registry
-	workerID   string
-	security   security.Policy
-	store      storage.RunStore
-	artifacts  *artifacts.Manager
-	tests      testsources.TestSourceProvider
-	metrics    *observability.SchedulerMetrics
-	logger     *observability.Logger
-	tracer     *observability.Tracer
-	audit      *observability.AuditLogger
+	legacyHarness bool
+	dispatcher    *scheduler.Dispatcher
+	producer      kafka.Producer
+	topics        kafka.TopicNames
+	languages     *languages.Registry
+	workerID      string
+	security      security.Policy
+	store         storage.RunStore
+	artifacts     *artifacts.Manager
+	tests         testsources.TestSourceProvider
+	metrics       *observability.SchedulerMetrics
+	logger        *observability.Logger
+	tracer        *observability.Tracer
+	audit         *observability.AuditLogger
 }
 
 func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, storage.RunStore, error) {
@@ -147,19 +148,20 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 	topics := kafka.TopicNamesFromConfig(cfg.Kafka.Topics)
 	securityPolicy := security.PolicyFromConfigAndLimits(cfg, limitsConfig)
 	handler := requestPipeline{
-		dispatcher: dispatcher,
-		producer:   deps.Producer,
-		topics:     topics,
-		languages:  languageRegistry,
-		workerID:   cfg.App.WorkerID,
-		security:   securityPolicy,
-		store:      runStore,
-		artifacts:  artifactManager,
-		tests:      testSources,
-		metrics:    metrics,
-		logger:     logger,
-		tracer:     tracer,
-		audit:      audit,
+		legacyHarness: cfg.FeatureFlags.LegacyHarness,
+		dispatcher:    dispatcher,
+		producer:      deps.Producer,
+		topics:        topics,
+		languages:     languageRegistry,
+		workerID:      cfg.App.WorkerID,
+		security:      securityPolicy,
+		store:         runStore,
+		artifacts:     artifactManager,
+		tests:         testSources,
+		metrics:       metrics,
+		logger:        logger,
+		tracer:        tracer,
+		audit:         audit,
 	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
 	if err != nil {
@@ -215,6 +217,9 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		return fmt.Errorf("unknown attempt reservation state %q", reservation.State)
 	}
 
+	if req.Execution == nil && !p.legacyHarness {
+		return p.completeInvalidRequest(ctx, req, "checker_error", errors.New("legacy harness is disabled"))
+	}
 	prepareStartedAt := time.Now()
 	prepareCtx, endPrepare := p.startSpan(ctx, "prepare", "attempt_id", req.AttemptID, "language", req.Language.ID)
 	ctx = prepareCtx

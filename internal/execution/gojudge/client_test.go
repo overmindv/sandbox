@@ -10,7 +10,7 @@ import (
 	"overmindv/sandbox/internal/config"
 )
 
-func TestClientRetriesInfrastructureErrorsOnly(t *testing.T) {
+func TestClientDoesNotRepeatAmbiguousExecution(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -28,17 +28,11 @@ func TestClientRetriesInfrastructureErrorsOnly(t *testing.T) {
 		return
 	}
 
-	results, err := client.Run(context.Background(), Request{Cmd: []Command{{Args: []string{"python3"}}}})
-	if err != nil {
-		t.Errorf("run request: %v", err)
-		return
+	_, err = client.Run(context.Background(), Request{Cmd: []Command{{Args: []string{"python3"}}}})
+	if !errors.Is(err, ErrInfrastructure) || attempts != 1 {
+		t.Fatalf("ambiguous execution repeated: calls=%d err=%v", attempts, err)
 	}
-	if len(results) != 1 || results[0].Status != StatusAccepted {
-		t.Errorf("unexpected results %#v", results)
-	}
-	if attempts != 2 {
-		t.Errorf("expected two attempts, got %d", attempts)
-	}
+
 }
 
 func TestClientDoesNotRetryRequestErrors(t *testing.T) {

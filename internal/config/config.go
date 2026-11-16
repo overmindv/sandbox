@@ -55,6 +55,7 @@ type ServerConfig struct {
 }
 
 type FeatureFlags struct {
+	LegacyHarness          bool `yaml:"legacy_harness"`
 	FakeExecutor           bool `yaml:"fake_executor"`
 	GoJudgeExecutor        bool `yaml:"gojudge_executor"`
 	InlineTests            bool `yaml:"inline_tests"`
@@ -490,6 +491,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if err := applyBoolEnv("SANDBOX_FEATURE_GOJUDGE_EXECUTOR", &cfg.FeatureFlags.GoJudgeExecutor); err != nil {
 		return err
 	}
+	if err := applyBoolEnv("SANDBOX_FEATURE_LEGACY_HARNESS", &cfg.FeatureFlags.LegacyHarness); err != nil {
+		return err
+	}
 	if err := applyBoolEnv("SANDBOX_FEATURE_INLINE_TESTS", &cfg.FeatureFlags.InlineTests); err != nil {
 		return err
 	}
@@ -637,6 +641,9 @@ func applyEnvOverrides(cfg *Config) error {
 
 func (cfg Config) Validate() error {
 	var errs []string
+	if cfg.FeatureFlags.LegacyHarness && cfg.App.Environment != "local" && cfg.App.Environment != "dev" && cfg.App.Environment != "test" {
+		errs = append(errs, "legacy harness is only available in local/dev/test")
+	}
 	if cfg.SchemaVersion != ConfigSchemaVersion {
 		errs = append(errs, fmt.Sprintf("schema_version must be %q", ConfigSchemaVersion))
 	}

@@ -1,0 +1,3 @@
+package main
+import ("os"; "io")
+func main(){_, _ = io.Copy(os.Stdout, os.Stdin)}

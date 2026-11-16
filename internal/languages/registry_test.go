@@ -132,7 +132,7 @@ func TestRegistryBuildsGoCommandFromManifest(t *testing.T) {
 	if command.Environment["PATH"] != "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" {
 		t.Errorf("expected Go PATH from manifest, got %#v", command.Environment)
 	}
-	if !containsCommandFile(command.Files, "go.mod", execution.FileKindHarness) {
+	if !containsCommandFile(command.Files, "go.mod", execution.FileKindBuild) {
 		t.Errorf("expected generated go.mod harness file, got %#v", command.Files)
 	}
 }

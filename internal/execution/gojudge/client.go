@@ -14,19 +14,19 @@ import (
 	"time"
 
 	"overmindv/sandbox/internal/config"
+	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 )
 
 var (
+	ErrProtocol       = errors.New("go-judge protocol corruption")
 	ErrInfrastructure = errors.New("go-judge infrastructure error")
 	ErrRequestFailed  = errors.New("go-judge request failed")
 )
 
 type Client struct {
-	baseURL     *url.URL
-	httpClient  *http.Client
-	maxAttempts int
-	backoff     time.Duration
+	baseURL    *url.URL
+	httpClient *http.Client
 }
 
 type HTTPError struct {
@@ -75,8 +75,6 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 			Timeout:   timeout,
 			Transport: transport,
 		},
-		maxAttempts: 2,
-		backoff:     50 * time.Millisecond,
 	}, nil
 }
 
@@ -93,25 +91,7 @@ func (c *Client) Run(ctx context.Context, request Request) ([]Result, error) {
 		return nil, fmt.Errorf("%w: encode request: %v", ErrRequestFailed, err)
 	}
 
-	var lastErr error
-	attempts := c.maxAttempts
-	if attempts <= 0 {
-		attempts = 1
-	}
-	for attempt := 1; attempt <= attempts; attempt++ {
-		results, err := c.runOnce(ctx, body)
-		if err == nil {
-			return results, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil || attempt == attempts || !IsRetryableInfrastructureError(err) {
-			break
-		}
-		if err := sleepContext(ctx, c.backoff*time.Duration(attempt)); err != nil {
-			return nil, err
-		}
-	}
-	return nil, lastErr
+	return c.runOnce(ctx, body)
 }
 
 func (c *Client) Healthy(ctx context.Context) bool {
@@ -162,9 +142,12 @@ func (c *Client) runOnce(ctx context.Context, body []byte) ([]Result, error) {
 	}
 
 	var results []Result
-	decoder := json.NewDecoder(resp.Body)
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 64*1024*1024+1))
 	if err := decoder.Decode(&results); err != nil {
-		return nil, fmt.Errorf("%w: decode run response: %v", ErrInfrastructure, err)
+		return nil, fmt.Errorf("%w: invalid JSON response", ErrProtocol)
+	}
+	if !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+		return nil, ErrProtocol
 	}
 	return results, nil
 }
@@ -196,17 +179,20 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 		return execution.ExecutionResult{}, err
 	}
 	results, err := e.client.Run(ctx, request)
+	if errors.Is(err, ErrProtocol) {
+		return protocolErrorResult(), nil
+	}
 	if err != nil {
 		return execution.ExecutionResult{}, err
 	}
 	if execution.IsExecutionMode(command) {
 		if err := ValidateExecutionBatch(results, len(command.Inputs)); err != nil {
-			return execution.ExecutionResult{}, fmt.Errorf("%w: %v", ErrInfrastructure, err)
+			return protocolErrorResult(), nil
 		}
 		return ExecutionResultFromResponseBatch(command, results), nil
 	}
 	if err := ValidateResponse(results); err != nil {
-		return execution.ExecutionResult{}, fmt.Errorf("%w: %v", ErrInfrastructure, err)
+		return protocolErrorResult(), nil
 	}
 	return ExecutionResultFromResponse(command, results[0]), nil
 }
@@ -257,3 +243,8 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 }
 
 var _ execution.Executor = (*Executor)(nil)
+
+// Protocol corruption не превращается в пользовательский verdict.
+func protocolErrorResult() execution.ExecutionResult {
+	return execution.ExecutionResult{Status: contracts.StatusInvalidRequest, Error: &contracts.RunError{Code: "checker_error", Message: "invalid execution protocol", Retryable: false}}
+}

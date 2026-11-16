@@ -106,7 +106,7 @@ func buildWorkspaceFiles(files []execution.ExecutionFile) []execution.ExecutionF
 	}
 	files = append(files, execution.ExecutionFile{
 		Path:    "go.mod",
-		Kind:    execution.FileKindHarness,
+		Kind:    execution.FileKindBuild,
 		Content: []byte("module " + DefaultModulePath + "\n\ngo 1.26\n"),
 	})
 	return files

@@ -98,6 +98,7 @@ func TestPostgresPipelineCrashMatrix(t *testing.T) {
 			producer := &crashProducer{fail: stage == "after_run_before_publish"}
 			executor := &countingExecutor{}
 			cfg := config.Default()
+			cfg.FeatureFlags.LegacyHarness = true
 			cfg.Server.HealthAddr = "127.0.0.1:0"
 			cfg.Observability.MetricsEnabled = false
 			cfg.App.WorkerID = "recovery-" + stage

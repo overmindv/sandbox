@@ -12,6 +12,7 @@ type FileKind string
 
 const (
 	FileKindSource  FileKind = "source"
+	FileKindBuild   FileKind = "build"
 	FileKindTest    FileKind = "test"
 	FileKindHarness FileKind = "harness"
 )
@@ -67,6 +68,9 @@ func IsExecutionMode(command ExecutionCommand) bool {
 }
 
 func CommandFromRunRequest(req contracts.RunRequest) (ExecutionCommand, error) {
+	if req.Execution != nil && (req.Tests.Mode != "" || req.Tests.Source != "" || req.Tests.Entrypoint != "" || req.Tests.SuiteID != "" || len(req.Tests.Files) > 0) {
+		return ExecutionCommand{}, fmt.Errorf("%w: execution cannot contain test material", ErrInvalidCommandPayload)
+	}
 	mode := ""
 	var inputs []string
 	if req.Execution != nil {

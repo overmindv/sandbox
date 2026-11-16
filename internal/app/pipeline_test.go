@@ -26,6 +26,7 @@ import (
 
 func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -170,6 +171,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 
 func TestWorkerPipelineExecutionModeToFakeResult(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-exec-worker"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -268,6 +270,7 @@ func TestWorkerPipelineSharedExecutionFixtures(t *testing.T) {
 	for _, mode := range []string{"execution", "execution-go"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg := config.Default()
+			cfg.FeatureFlags.LegacyHarness = true
 			cfg.App.WorkerID = "pipeline-exec-worker"
 			cfg.Server.HealthAddr = "127.0.0.1:0"
 			cfg.Observability.MetricsEnabled = false
@@ -379,6 +382,7 @@ func TestWorkerPipelineSharedExecutionFixtures(t *testing.T) {
 
 func TestWorkerPipelineKafkaGoRequestToFakeResult(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-go-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -474,6 +478,7 @@ func TestWorkerPipelineKafkaGoRequestToFakeResult(t *testing.T) {
 
 func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-artifact-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -618,6 +623,7 @@ func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
 
 func TestWorkerPipelineResolvesObjectStorageTests(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-test-source-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -716,6 +722,7 @@ func TestWorkerPipelineResolvesObjectStorageTests(t *testing.T) {
 
 func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -794,6 +801,7 @@ func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 
 func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-idempotency-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -899,6 +907,7 @@ func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
 
 func TestWorkerPipelineRetryableExecutorErrorSchedulesRetry(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-retry-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -1009,6 +1018,7 @@ func TestWorkerPipelineRetryableExecutorErrorSchedulesRetry(t *testing.T) {
 
 func TestWorkerRunConsumesKafkaUntilShutdown(t *testing.T) {
 	cfg := config.Default()
+	cfg.FeatureFlags.LegacyHarness = true
 	cfg.App.WorkerID = "pipeline-run-worker-test"
 	cfg.Server.HealthAddr = "127.0.0.1:0"
 	cfg.Observability.MetricsEnabled = false
@@ -1377,3 +1387,36 @@ func (e *failingExecutor) Healthy() bool {
 }
 
 var _ execution.Executor = (*failingExecutor)(nil)
+
+func TestWorkerDisablesLegacyHarnessByDefault(t *testing.T) {
+	for _, req := range []contracts.RunRequest{validPipelineRunRequest(), validPipelineGoRunRequest()} {
+		cfg := config.Default()
+		cfg.Server.HealthAddr = "127.0.0.1:0"
+		cfg.Observability.MetricsEnabled = false
+		payload, _ := kafka.EncodeRunRequest(req)
+		consumer := &pipelineConsumer{messages: []kafka.Message{{Topic: cfg.Kafka.Topics.Requests, Key: []byte(req.SubmissionID), Value: payload}}}
+		producer := &pipelineProducer{}
+		executor := &countingExecutor{}
+		worker, err := app.NewWorkerWithDeps(cfg, observability.NewLogger("error", "json", nil), app.WorkerDeps{Consumer: consumer, Producer: producer, RunStore: storage.NewMemoryRunStore(), Executor: executor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		if err = worker.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err = worker.ProcessOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		shutdown, cancel := context.WithTimeout(ctx, time.Second)
+		_ = worker.Shutdown(shutdown)
+		cancel()
+		if executor.Calls() != 0 || len(producer.messages) != 1 {
+			t.Fatal("legacy harness executed")
+		}
+		result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+		if err != nil || result.Status != contracts.StatusInvalidRequest || result.Error.Code != "checker_error" {
+			t.Fatalf("wrong blocked result: %+v %v", result, err)
+		}
+	}
+}

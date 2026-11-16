@@ -171,15 +171,15 @@ func ValidateResponse(results []Result) error {
 	if len(results) > 1 {
 		return fmt.Errorf("go-judge returned %d command results for a single command", len(results))
 	}
-	return nil
+	return validateResults(results)
 }
 
 // ValidateExecutionBatch проверяет, что go-judge вернул ровно N результатов исполнения кейсов.
 func ValidateExecutionBatch(results []Result, expected int) error {
-	if len(results) != expected {
+	if expected <= 0 || len(results) != expected {
 		return fmt.Errorf("go-judge returned %d results, expected %d", len(results), expected)
 	}
-	return nil
+	return validateResults(results)
 }
 
 // ExecutionResultFromResponseBatch отображает результаты исполнения всех входных кейсов
@@ -280,4 +280,22 @@ func caseErrorCode(status contracts.ExecutionStatus) string {
 	default:
 		return "runtime_error"
 	}
+}
+
+func validateResults(results []Result) error {
+	for _, r := range results {
+		switch r.Status {
+		case StatusAccepted:
+			if r.ExitStatus != 0 || r.Error != "" || len(r.FileError) > 0 {
+				return fmt.Errorf("inconsistent accepted response")
+			}
+		case StatusMemoryLimitExceeded, StatusTimeLimitExceeded, StatusOutputLimitExceeded, StatusFileError, StatusNonzeroExitStatus, StatusSignalled, StatusInternalError, StatusDangerousSyscall:
+		default:
+			return fmt.Errorf("unknown runtime status")
+		}
+		if r.Time < 0 || r.Memory < 0 || r.RunTime < 0 {
+			return fmt.Errorf("negative runtime usage")
+		}
+	}
+	return nil
 }

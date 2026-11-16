@@ -1,0 +1,3 @@
+package main
+import ("os"; "fmt")
+func main(){for _,p := range []string{"expected.txt","suite.json",".sandbox/expected.json"} { if _,err:=os.Stat(p);err==nil{panic("expected data exposed")} }; fmt.Println("expected unavailable")}

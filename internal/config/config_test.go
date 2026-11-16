@@ -120,3 +120,12 @@ func TestSuiteAndArtifactCredentialsDiffer(t *testing.T) {
 		t.Fatalf("shared credentials accepted: %v", err)
 	}
 }
+
+func TestProductionRejectsLegacyHarness(t *testing.T) {
+	cfg := Default()
+	cfg.App.Environment = "prod"
+	cfg.FeatureFlags.LegacyHarness = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "legacy harness") {
+		t.Fatalf("unsafe harness enabled: %v", err)
+	}
+}

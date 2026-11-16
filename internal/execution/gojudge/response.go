@@ -1,5 +1,10 @@
 package gojudge
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 const (
 	StatusAccepted            = "Accepted"
 	StatusMemoryLimitExceeded = "Memory Limit Exceeded"
@@ -29,4 +34,34 @@ type FileError struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Message string `json:"message,omitempty"`
+}
+
+// Для Accepted exitStatus обязателен: нулевое значение отсутствующего поля не является доказательством успеха.
+func (r *Result) UnmarshalJSON(data []byte) error {
+	type wire Result
+	var value wire
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.Status == StatusAccepted {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return err
+		}
+		exit, ok := fields["exitStatus"]
+		if !ok || string(exit) == "null" {
+			return fmt.Errorf("accepted response lacks exit status")
+		}
+		var files map[string]json.RawMessage
+		if err := json.Unmarshal(fields["files"], &files); err != nil {
+			return fmt.Errorf("accepted response lacks output")
+		}
+		stdout, ok := files["stdout"]
+		if !ok || string(stdout) == "null" {
+			return fmt.Errorf("accepted response lacks stdout")
+		}
+
+	}
+	*r = Result(value)
+	return nil
 }

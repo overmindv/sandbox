@@ -3,7 +3,6 @@ package gojudge
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -56,12 +55,15 @@ func TestExecutorValidatesExecutionResultCardinality(t *testing.T) {
 			command := validGoJudgeCommand()
 			if tt.execution {
 				command.Mode = contracts.ExecutionMode
+				command.CopyOut = nil
+				command.TestMode = ""
+				command.Files = command.Files[:1]
 				command.Inputs = []string{"3 2", "4 4", "1 1"}
 			}
 			result, err := executor.Execute(context.Background(), command)
 			if tt.wantError {
-				if !errors.Is(err, ErrInfrastructure) {
-					t.Fatalf("expected infrastructure error for mismatched cardinality, got %v", err)
+				if err != nil || result.Status != contracts.StatusInvalidRequest || result.Error.Code != "checker_error" {
+					t.Fatalf("expected checker_error: %+v %v", result, err)
 				}
 				return
 			}
@@ -76,5 +78,36 @@ func TestExecutorValidatesExecutionResultCardinality(t *testing.T) {
 				t.Fatalf("batch results lost or reordered: %+v", result)
 			}
 		})
+	}
+}
+
+func TestProtocolCorruptionNeverPasses(t *testing.T) {
+	for _, payload := range []string{
+		"not-json", "[]", "[{}]",
+		`[{"status":"Accepted","exitStatus":0}]`,
+		`[{"status":"Accepted","exitStatus":0,"files":{"stdout":null}}]`,
+		`[{"status":"Accepted","exitStatus":7,"files":{"stdout":""}}]`,
+		`[{"status":"Accepted"}]`,
+		`[{"status":"Accepted","exitStatus":null}]`,
+		`[{"status":"Accepted","exitStatus":0,"error":"corrupt","files":{"stdout":""}}]`,
+		`[{"status":"Accepted","exitStatus":0,"memory":-1,"files":{"stdout":""}}]`,
+		`[{"status":"Accepted","exitStatus":0,"files":{"stdout":""}}] {}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(payload)) }))
+		executor, err := NewExecutor(config.GoJudgeClient{BaseURL: server.URL, RequestTimeoutMS: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := validGoJudgeCommand()
+		command.Mode = contracts.ExecutionMode
+		command.Inputs = []string{"x"}
+		command.CopyOut = nil
+		command.TestMode = ""
+		command.Files = command.Files[:1]
+		result, err := executor.Execute(context.Background(), command)
+		server.Close()
+		if err != nil || result.Status != contracts.StatusInvalidRequest || result.Error == nil || result.Error.Code != "checker_error" || result.Error.Retryable {
+			t.Fatalf("corruption passed: %s %+v %v", payload, result, err)
+		}
 	}
 }

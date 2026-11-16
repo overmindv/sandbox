@@ -51,7 +51,7 @@ func TestBuildCommandGeneratesGoTestWorkspace(t *testing.T) {
 	if !containsGoExecutionFile(command.Files, "solution_test.go", execution.FileKindTest) {
 		t.Errorf("expected test file in workspace, got %#v", command.Files)
 	}
-	if !containsGoExecutionFile(command.Files, "go.mod", execution.FileKindHarness) {
+	if !containsGoExecutionFile(command.Files, "go.mod", execution.FileKindBuild) {
 		t.Errorf("expected generated go.mod in workspace, got %#v", command.Files)
 	}
 	if command.RuntimeLimits.MemoryBytes != 128*1024*1024 {

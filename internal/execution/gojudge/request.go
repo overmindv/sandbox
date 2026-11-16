@@ -57,6 +57,16 @@ func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, e
 		return Request{}, fmt.Errorf("%w: runtime memory limit is required", execution.ErrInvalidCommandPayload)
 	}
 
+	if execution.IsExecutionMode(command) {
+		if len(command.CopyOut) > 0 || command.TestMode != "" || command.TestEntrypoint != "" {
+			return Request{}, fmt.Errorf("%w: execution contains report controls", execution.ErrInvalidCommandPayload)
+		}
+		for _, file := range command.Files {
+			if file.Kind != execution.FileKindSource && file.Kind != execution.FileKindBuild {
+				return Request{}, fmt.Errorf("%w: execution contains test material", execution.ErrInvalidCommandPayload)
+			}
+		}
+	}
 	copyIn := make(map[string]MemoryFile, len(command.Files))
 	for _, file := range command.Files {
 		normalized, err := security.NormalizeRelativePath(file.Path, security.DefaultPolicy())
