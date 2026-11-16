@@ -12,7 +12,7 @@ import (
 func TestSharedExecutionFixtures(t *testing.T) {
 	t.Parallel()
 	root := "../../tests/fixtures/execution-contract"
-	for _, mode := range []string{"execution", "pytest", "go-test"} {
+	for _, mode := range []string{"execution", "execution-go", "pytest", "go-test"} {
 		t.Run(mode, func(t *testing.T) {
 			payload, err := os.ReadFile(filepath.Join(root, mode+".request.json"))
 			if err != nil {

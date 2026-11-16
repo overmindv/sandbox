@@ -69,7 +69,7 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 				Topic:     "code-execution.requests.v1",
 				Partition: 2,
 				Offset:    99,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{HeaderTraceID: "trace-header"},
 			},
@@ -137,7 +137,7 @@ func TestProcessorValidRequestDelegatesAndCommits(t *testing.T) {
 				Topic:     "code-execution.requests.v1",
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{HeaderTraceID: "trace-header"},
 			},
@@ -207,7 +207,7 @@ func TestProcessorRetryableHandlerErrorSchedulesRetryAndCommits(t *testing.T) {
 				Topic:     "code-execution.requests.v1",
 				Partition: 0,
 				Offset:    10,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{HeaderTraceID: req.TraceID},
 			},
@@ -272,7 +272,7 @@ func TestProcessorRetryMessageTooEarlyIsNotCommitted(t *testing.T) {
 				Topic:     "code-execution.retry.v1",
 				Partition: 0,
 				Offset:    12,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers: map[string]string{
 					HeaderTraceID:        req.TraceID,
@@ -333,7 +333,7 @@ func TestProcessorRetryExhaustedPublishesResultDLQAndCommits(t *testing.T) {
 				Topic:     "code-execution.retry.v1",
 				Partition: 1,
 				Offset:    11,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers: map[string]string{
 					HeaderTraceID:           req.TraceID,
@@ -414,7 +414,7 @@ func TestProcessorNonRetryableUserErrorPublishesResultDLQAndCommits(t *testing.T
 				Topic:     "code-execution.requests.v1",
 				Partition: 0,
 				Offset:    12,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{HeaderTraceID: req.TraceID},
 			},
@@ -628,3 +628,55 @@ func (p *fakeProducer) Close() error {
 
 var _ Consumer = (*fakeConsumer)(nil)
 var _ Producer = (*fakeProducer)(nil)
+
+func TestProcessorRejectsWrongSubmissionKeyBeforeHandler(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"", req.AttemptID, "other"} {
+		called := false
+		consumer := &fakeConsumer{messages: []Message{{Topic: testTopics().Requests, Key: []byte(key), Value: payload}}}
+		producer := &fakeProducer{}
+		p := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error { called = true; return nil }))
+		if err := p.ProcessOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if called {
+			t.Fatal("invalid key reached handler")
+		}
+		result, err := DecodeRunResult(producer.messages[0].Value)
+		if err != nil || result.Status != contracts.StatusInvalidRequest {
+			t.Fatalf("invalid-key result: %s %v", result.Status, err)
+		}
+	}
+}
+
+func TestProcessorInvalidVersionOmitsEvaluationContext(t *testing.T) {
+	for _, version := range []string{"", "invalid"} {
+		req := validKafkaRunRequest()
+		req.Execution = &contracts.ExecutionSpec{Mode: contracts.ExecutionMode, Inputs: []string{"x"}}
+		req.Metadata = map[string]any{"result_context_version": "1"}
+		if version != "" {
+			req.Metadata["task_version_id"] = version
+		}
+		payload, err := EncodeRunRequest(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer := &fakeConsumer{messages: []Message{{Topic: testTopics().Requests, Key: []byte(req.SubmissionID), Value: payload}}}
+		producer := &fakeProducer{}
+		p := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+			t.Fatal("invalid version executed")
+			return nil
+		}))
+		if err := p.ProcessOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		result, err := DecodeRunResult(producer.messages[0].Value)
+		if err != nil || result.Status != contracts.StatusInvalidRequest || result.EvaluationContext != nil {
+			t.Fatalf("invalid rejection: %+v %v", result, err)
+		}
+	}
+}

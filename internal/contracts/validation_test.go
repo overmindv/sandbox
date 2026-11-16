@@ -234,3 +234,23 @@ func validRunRequest() RunRequest {
 func encode(value string) string {
 	return base64.StdEncoding.EncodeToString([]byte(value))
 }
+
+func TestExecutionEnvelopeRejectsUnknownModeAndInvalidContext(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*RunRequest)
+	}{
+		{"unknown execution", func(r *RunRequest) { r.Execution = &ExecutionSpec{Mode: "unknown", Inputs: []string{"hello"}} }},
+		{"invalid task version", func(r *RunRequest) {
+			r.Metadata = map[string]any{"result_context_version": "1", "task_version_id": "not-uuid"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := validRunRequest()
+			tc.mutate(&r)
+			if ValidateRunRequest(r) == nil {
+				t.Fatal("invalid envelope accepted")
+			}
+		})
+	}
+}

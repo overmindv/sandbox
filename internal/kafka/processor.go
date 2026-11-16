@@ -214,6 +214,11 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 		finishValidate(err, "reason", "invalid_request", "attempt_id", req.AttemptID)
 		return p.publishInvalidRequest(ctx, msg, req, err)
 	}
+	if string(msg.Key) != req.SubmissionID {
+		err := errors.New("message key must equal submission_id")
+		finishValidate(err, "reason", "invalid_request")
+		return p.publishInvalidRequest(ctx, msg, req, err)
+	}
 	if p.SecurityGuard != nil {
 		if err := p.SecurityGuard.ValidateRunRequest(req); err != nil {
 			p.Logger.Warn(ctx, "run request rejected by security guard", "attempt_id", req.AttemptID, "error", err)

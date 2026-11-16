@@ -220,3 +220,16 @@ terminal result активного исполнения.
 `python scripts/check_execution_contract.py --peer ../tasks` проверяет JSON Schema
 и совпадение snapshots обеих сторон (зависимости scripts/requirements-contract.txt).
 Go-тест TestSharedExecutionFixtures проверяет реальные decoder и validator.
+
+## Уточнения конверта OVM-225
+
+Kafka key строго равен `submission_id`; пустой или другой ключ отклоняется до
+выполнения. `attempt_id` остаётся ключом идемпотентности попытки.
+Наличие `execution` требует поддерживаемого режима: неизвестный mode не
+переключает запрос на legacy tests. Старые pytest/go-test запросы без execution
+сохраняют совместимость.
+
+Opt-in `metadata.result_context_version="1"` требует UUID `task_version_id`.
+Результат возвращает контекст версии и checksum упорядоченных входов; каждый
+case имеет уникальный индекс. Общие fixtures Python и Go проверяют сериализацию,
+схему и pipeline с fake executor; они не доказывают изоляцию реального runtime.

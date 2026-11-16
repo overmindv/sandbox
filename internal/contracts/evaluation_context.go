@@ -26,5 +26,8 @@ func EvaluationContextForRequest(req RunRequest) *EvaluationContext {
 		return nil
 	}
 	version, _ := req.Metadata["task_version_id"].(string)
+	if !uuidPattern.MatchString(version) {
+		return nil
+	}
 	return &EvaluationContext{TaskVersionID: version, SuiteSHA256: InputSuiteSHA256(req.Execution.Inputs)}
 }

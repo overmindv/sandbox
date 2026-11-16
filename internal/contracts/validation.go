@@ -106,13 +106,17 @@ func ValidateRunRequestWithOptions(req RunRequest, opts ValidationOptions) error
 		validateSafePath(&errs, "code.entrypoint", req.Code.Entrypoint, opts.MaxPathLength)
 	}
 	validateFiles(&errs, "code.files", req.Code.Files, opts.MaxSourceFiles, opts)
-	if req.Execution != nil && req.Execution.Mode == ExecutionMode {
+	if req.Execution != nil {
 		validateExecutionSpec(&errs, req.Execution, opts)
 	} else {
 		validateTests(&errs, req.Tests, opts)
 	}
 	validateLimits(&errs, req.Limits, opts)
 
+	if req.Metadata["result_context_version"] == "1" {
+		version, _ := req.Metadata["task_version_id"].(string)
+		validateUUID(&errs, "metadata.task_version_id", version)
+	}
 	if len(req.Metadata) > opts.MaxMetadataKeys {
 		errs.add("metadata", fmt.Sprintf("must contain at most %d keys", opts.MaxMetadataKeys))
 	}

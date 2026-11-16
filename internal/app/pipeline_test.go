@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -49,7 +50,7 @@ func TestWorkerPipelineKafkaRequestToFakeResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 				Time:      req.CreatedAt.Add(-2 * time.Second),
@@ -192,7 +193,7 @@ func TestWorkerPipelineExecutionModeToFakeResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 				Time:      req.CreatedAt.Add(-2 * time.Second),
@@ -263,6 +264,119 @@ func TestWorkerPipelineExecutionModeToFakeResult(t *testing.T) {
 	}
 }
 
+func TestWorkerPipelineSharedExecutionFixtures(t *testing.T) {
+	for _, mode := range []string{"execution", "execution-go"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.App.WorkerID = "pipeline-exec-worker"
+			cfg.Server.HealthAddr = "127.0.0.1:0"
+			cfg.Observability.MetricsEnabled = false
+			cfg.Executor.Type = "fake"
+			cfg.Executor.Fake.DefaultStatus = "passed"
+			cfg.Executor.Fake.LatencyMS = 0
+			cfg.Scheduler.JobTimeoutMS = 1000
+			cfg.Scheduler.Queue.MaxDepth = 8
+			cfg.Scheduler.Queue.EnqueueTimeoutMS = 10
+
+			payload, err := os.ReadFile("../../tests/fixtures/execution-contract/" + mode + ".request.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := kafka.DecodeRunRequest(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Golden fixture имеет фиксированную дату; проверяем свежую доставку.
+			req.CreatedAt = time.Now().UTC()
+			payload, err = kafka.EncodeRunRequest(req)
+			if err != nil {
+				t.Errorf("encode request: %v", err)
+				return
+			}
+
+			consumer := &pipelineConsumer{
+				messages: []kafka.Message{
+					{
+						Topic:     cfg.Kafka.Topics.Requests,
+						Partition: 0,
+						Offset:    1,
+						Key:       []byte(req.SubmissionID),
+						Value:     payload,
+						Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
+						Time:      req.CreatedAt.Add(-2 * time.Second),
+					},
+				},
+			}
+			producer := &pipelineProducer{}
+			store := storage.NewMemoryRunStore()
+			metrics := observability.NewSchedulerMetrics()
+
+			var logs bytes.Buffer
+			logger := observability.NewLogger("debug", "json", &logs)
+			worker, err := app.NewWorkerWithDeps(cfg, logger, app.WorkerDeps{
+				Consumer: consumer,
+				Producer: producer,
+				RunStore: store,
+				Metrics:  metrics,
+			})
+			if err != nil {
+				t.Errorf("new worker with deps: %v", err)
+				return
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := worker.Start(ctx); err != nil {
+				t.Errorf("start worker: %v", err)
+				return
+			}
+			t.Cleanup(func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				_ = worker.Shutdown(shutdownCtx)
+			})
+
+			if err := worker.ProcessOnce(ctx); err != nil {
+				t.Errorf("process once: %v", err)
+				return
+			}
+
+			if len(producer.messages) != 1 {
+				t.Errorf("expected one result message, got %d", len(producer.messages))
+				return
+			}
+
+			result, err := kafka.DecodeRunResult(producer.messages[0].Value)
+			if err != nil {
+				t.Errorf("decode result: %v; logs: %s", err, logs.String())
+				return
+			}
+			if result.Status != contracts.StatusOK {
+				t.Errorf("expected ok status, got %q", result.Status)
+			}
+
+			if len(consumer.committed) != 1 {
+				t.Fatal("request not committed")
+			}
+			if string(producer.messages[0].Key) != req.SubmissionID || result.AttemptID != req.AttemptID {
+				t.Fatal("identity mismatch")
+			}
+			if result.Summary.CasesTotal != len(req.Execution.Inputs) || len(result.Cases) != len(req.Execution.Inputs) {
+				t.Fatal("incomplete cases")
+			}
+			for i, c := range result.Cases {
+				if c.Index != i || c.Stdout != req.Execution.Inputs[i] || c.Status != string(contracts.StatusOK) {
+					t.Fatalf("invalid case %d: %+v", i, c)
+				}
+			}
+			expected := contracts.EvaluationContextForRequest(req)
+			if expected == nil || result.EvaluationContext == nil || *expected != *result.EvaluationContext {
+				t.Fatal("evaluation context mismatch")
+			}
+		})
+	}
+}
+
 func TestWorkerPipelineKafkaGoRequestToFakeResult(t *testing.T) {
 	cfg := config.Default()
 	cfg.App.WorkerID = "pipeline-go-worker-test"
@@ -288,7 +402,7 @@ func TestWorkerPipelineKafkaGoRequestToFakeResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    20,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 				Time:      req.CreatedAt.Add(-2 * time.Second),
@@ -387,7 +501,7 @@ func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    2,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -532,7 +646,7 @@ func TestWorkerPipelineResolvesObjectStorageTests(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    3,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -625,7 +739,7 @@ func TestWorkerPipelineUnsupportedLanguageResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -701,7 +815,7 @@ func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -709,7 +823,7 @@ func TestWorkerPipelineDuplicateAttemptRepublishesKnownResult(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    2,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -811,7 +925,7 @@ func TestWorkerPipelineRetryableExecutorErrorSchedulesRetry(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    10,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
@@ -918,7 +1032,7 @@ func TestWorkerRunConsumesKafkaUntilShutdown(t *testing.T) {
 				Topic:     cfg.Kafka.Topics.Requests,
 				Partition: 0,
 				Offset:    1,
-				Key:       []byte(req.AttemptID),
+				Key:       []byte(req.SubmissionID),
 				Value:     payload,
 				Headers:   map[string]string{kafka.HeaderTraceID: req.TraceID},
 			},
