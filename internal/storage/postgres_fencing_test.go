@@ -76,7 +76,7 @@ func TestPostgresAttemptFence(t *testing.T) {
 	if err = owned.Value(attemptConnectionKey{}).(attemptConnection).conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.ExecContext(ctx, "SELECT pg_terminate_backend($1)", pid); err != nil {
+	if _, err = db.ExecContext(ctx, "SELECT pg_terminate_backend($1, 5000)", pid); err != nil {
 		t.Fatal(err)
 	}
 	recovered, releaseB, err := b.AcquireAttempt(ctx, req.AttemptID)
