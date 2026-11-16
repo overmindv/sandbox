@@ -33,6 +33,7 @@ type boundedQueue struct {
 }
 
 type queuedJob struct {
+	ctx      context.Context
 	job      Job
 	resultCh chan JobResult
 }

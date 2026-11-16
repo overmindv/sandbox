@@ -107,6 +107,15 @@ func (p RetryPolicy) Normalize() RetryPolicy {
 	if p.MaxAttempts <= 0 {
 		p.MaxAttempts = 3
 	}
+	if p.MaxAttempts > 5 {
+		p.MaxAttempts = 5
+	}
+	if p.InitialBackoff > 30*time.Second {
+		p.InitialBackoff = 30 * time.Second
+	}
+	if p.MaxBackoff > 30*time.Second {
+		p.MaxBackoff = 30 * time.Second
+	}
 	if p.InitialBackoff < 0 {
 		p.InitialBackoff = 0
 	}
@@ -146,7 +155,11 @@ func (p RetryPolicy) NextBackoff(retryCount int) time.Duration {
 		retryCount = 0
 	}
 	multiplier := math.Pow(p.BackoffMultiplier, float64(retryCount))
-	backoff := time.Duration(float64(p.InitialBackoff) * multiplier)
+	value := float64(p.InitialBackoff) * multiplier
+	if math.IsInf(value, 0) || value >= float64(p.MaxBackoff) {
+		return p.MaxBackoff
+	}
+	backoff := time.Duration(value)
 	if backoff > p.MaxBackoff {
 		return p.MaxBackoff
 	}

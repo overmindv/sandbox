@@ -198,3 +198,20 @@ Case stdout сохраняется исключительно в доверен�
 новую попытку должен выдавать Tasks с новым attempt ID.
 Неизвестный формат trace ID в operator logs заменяется стабильным хешем.
 Порядок обновления контракта: Tasks consumer, затем sandbox producer.
+
+## Ограниченное восстановление (OVM-230)
+
+Tasks задаёт `metadata.attempt_deadline` (RFC3339Nano), равный сроку текущего
+attempt. Sandbox не запускает просроченную попытку, ограничивает контекст обработчика
+остатком срока и не планирует retry за этой границей. Итог — infrastructure error
+`attempt_deadline_exceeded` и metadata-only DLQ. Максимум 5 обработок и 30 секунд
+backoff независимо от завышенной конфигурации. Старые producers без deadline
+сохраняют ограничение числа обработок; при обновлении сначала обновляется sandbox.
+
+Replay выполняется через внутренний Tasks endpoint
+`POST /v1/admin/code-submissions/{id}/replay` с trusted admin actor и
+`{"expected_attempt_id":"UUID"}`. Допустимы завершённые infrastructure/checker errors
+или queued с истёкшим сроком. Tasks сохраняет исходную версию и код, выдаёт новый ID,
+проверяет ёмкость очереди и атомарно пишет audit (actor, старый/новый ID, число попыток)
+и outbox. Повтор со старым expected ID возвращает 409. Успешные и ошибочные решения
+студента replay не допускают. Raw DLQ payload для восстановления не нужен.

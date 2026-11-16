@@ -233,6 +233,10 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	}
 	finishValidate(nil, "attempt_id", req.AttemptID, "language", req.Language.ID)
 
+	deadline, deadlineErr := attemptDeadline(req)
+	if deadlineErr != nil {
+		return p.publishInvalidRequest(ctx, msg, req, deadlineErr)
+	}
 	if fencer, ok := p.RunStore.(storage.AttemptFencer); ok {
 		owned, release, err := fencer.AcquireAttempt(ctx, req.AttemptID)
 		if err != nil {
@@ -241,10 +245,22 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 		defer release()
 		ctx = owned
 	}
+	if !deadline.IsZero() && !p.now().Before(deadline) {
+		return p.publishRetryExhausted(ctx, msg, req, deadlineDecision(), RetryCount(msg.Headers))
+	}
 	if p.Handler == nil {
 		return p.handleProcessingError(ctx, msg, req, ErrNoRunRequestHandler)
 	}
-	if err := p.Handler.HandleRunRequest(ctx, msg, req); err != nil {
+	handlerCtx := ctx
+	cancel := func() {}
+	if !deadline.IsZero() {
+		handlerCtx, cancel = context.WithTimeout(ctx, deadline.Sub(p.now()))
+	}
+	defer cancel()
+	if err := p.Handler.HandleRunRequest(handlerCtx, msg, req); err != nil {
+		if ctx.Err() == nil && errors.Is(handlerCtx.Err(), context.DeadlineExceeded) {
+			return p.publishRetryExhausted(ctx, msg, req, deadlineDecision(), RetryCount(msg.Headers))
+		}
 		return p.handleProcessingError(ctx, msg, req, err)
 	}
 	return nil
@@ -277,6 +293,9 @@ func (p *Processor) handleProcessingError(ctx context.Context, msg Message, req 
 	nextRetryCount := retryCount + 1
 	backoff := policy.NextBackoff(retryCount)
 	retryAt := p.now().Add(backoff)
+	if deadline, _ := attemptDeadline(req); !deadline.IsZero() && !retryAt.Before(deadline) {
+		return p.publishRetryExhausted(ctx, msg, req, deadlineDecision(), retryCount)
+	}
 	retryMessage := p.messageForRetry(msg, decision, nextRetryCount, retryAt)
 	if err := p.appendOutboxForMessage(ctx, req, storage.OutboxEventRetryReady, retryMessage, nextRetryCount); err != nil {
 		return err

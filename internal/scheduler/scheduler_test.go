@@ -301,3 +301,62 @@ func validSchedulerJob(createdAt time.Time) Job {
 func fixedSchedulerTime() time.Time {
 	return time.Date(2026, 8, 12, 19, 0, 0, 0, time.UTC)
 }
+
+func TestCanceledQueuedJobNeverStarts(t *testing.T) {
+	cfg := schedulerTestConfig()
+	cfg.MaxInFlight = 1
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var called atomic.Int64
+	d := newTestDispatcher(t, cfg, JobHandlerFunc(func(ctx context.Context, job Job) (any, error) {
+		if called.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		return nil, nil
+	}))
+	startDispatcher(t, context.Background(), d)
+	first, err := d.Submit(context.Background(), validSchedulerJob(fixedSchedulerTime()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	second, err := d.Submit(ctx, validSchedulerJob(fixedSchedulerTime()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	close(release)
+	<-first.Result
+	result := <-second.Result
+	if called.Load() != 1 || result.Error == nil {
+		t.Fatalf("canceled job executed: calls=%d error=%v", called.Load(), result.Error)
+	}
+}
+
+func TestRunningJobReceivesCallerCancellation(t *testing.T) {
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	d := newTestDispatcher(t, schedulerTestConfig(), JobHandlerFunc(func(ctx context.Context, job Job) (any, error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return nil, ctx.Err()
+	}))
+	startDispatcher(t, context.Background(), d)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	receipt, err := d.Submit(ctx, validSchedulerJob(fixedSchedulerTime()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not reach executor")
+	}
+	<-receipt.Result
+}

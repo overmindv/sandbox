@@ -180,7 +180,7 @@ func (d *Dispatcher) Submit(ctx context.Context, job Job) (JobReceipt, error) {
 	}
 
 	resultCh := make(chan JobResult, 1)
-	item := queuedJob{job: job, resultCh: resultCh}
+	item := queuedJob{job: job, resultCh: resultCh, ctx: ctx}
 	if err := d.queue.Enqueue(ctx, item, d.queuePolicy.EnqueueTimeout); err != nil {
 		d.metrics.IncRejected(errorKey(err))
 		d.observeQueue()
@@ -234,7 +234,19 @@ func (d *Dispatcher) runQueuedJob(workerIndex int, item queuedJob) {
 	startedAt := d.now()
 	queueTime := startedAt.Sub(job.CreatedAt)
 
-	acquireCtx, cancelAcquire := context.WithCancel(d.ctx)
+	parent := item.ctx
+	if parent == nil {
+		parent = d.ctx
+	}
+	executionCtx, cancelExecution := context.WithCancel(parent)
+	stopShutdown := context.AfterFunc(d.ctx, cancelExecution)
+	defer stopShutdown()
+	defer cancelExecution()
+	if err := executionCtx.Err(); err != nil {
+		d.finish(item, JobResult{JobID: job.ID, AttemptID: job.AttemptID, Status: "canceled", Error: err})
+		return
+	}
+	acquireCtx, cancelAcquire := context.WithCancel(executionCtx)
 	slot, err := d.slots.Acquire(acquireCtx, job.LanguageID)
 	cancelAcquire()
 	if err != nil {
@@ -261,7 +273,7 @@ func (d *Dispatcher) runQueuedJob(workerIndex int, item queuedJob) {
 	if job.Timeout > 0 {
 		timeout = job.Timeout
 	}
-	jobCtx, cancelJob := context.WithTimeout(d.ctx, timeout)
+	jobCtx, cancelJob := context.WithTimeout(executionCtx, timeout)
 	defer cancelJob()
 
 	d.logger.Debug(jobCtx, "scheduler job started", "worker_index", workerIndex, "job_id", job.ID, "attempt_id", job.AttemptID, "language", job.LanguageID)
@@ -271,6 +283,10 @@ func (d *Dispatcher) runQueuedJob(workerIndex int, item queuedJob) {
 	}
 	handlerResultCh := make(chan handlerResult, 1)
 	go func() {
+		if err := jobCtx.Err(); err != nil {
+			handlerResultCh <- handlerResult{err: err}
+			return
+		}
 		output, err := d.handler.HandleJob(jobCtx, job)
 		handlerResultCh <- handlerResult{output: output, err: err}
 	}()
