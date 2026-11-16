@@ -57,7 +57,19 @@ func TestPostgresPipelineCrashMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.ExecContext(ctx, string(raw)); err != nil {
+	// Пакеты component запускаются параллельно на одной выделенной БД.
+	migration, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migration.Rollback()
+	if _, err = migration.ExecContext(ctx, "SELECT pg_advisory_xact_lock(226001)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = migration.ExecContext(ctx, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err = migration.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"before_claim", "after_claim", "after_run_before_publish", "after_publish_before_commit"} {
