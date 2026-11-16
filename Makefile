@@ -37,4 +37,9 @@ perf-load-go:
 	powershell -ExecutionPolicy Bypass -File scripts/load-test.ps1 -Language go -Jobs 20 -TimeoutSeconds 180 -RunLabel local-go-20 -ReportPath .tmp/load-test-go-live-20-report.json
 
 test:
-	go test ./deployments/k8s ./internal/objectstore ./internal/artifacts ./internal/testsources ./internal/contracts ./internal/config ./internal/observability ./internal/app ./internal/kafka ./internal/scheduler ./internal/security ./internal/execution ./internal/execution/fake ./internal/execution/gojudge ./internal/execution/isolate ./internal/languages/... ./cmd/sandbox-worker
+	go test -race ./...
+
+.PHONY: ctest
+ctest:
+	@test -n "$(COMPONENT_TEST_DSN)" || (echo "COMPONENT_TEST_DSN is required"; exit 1)
+	go test -race -tags component ./internal/storage ./internal/app -run TestPostgres

@@ -68,3 +68,28 @@ configuration; cleanup jobs are intentionally separate from the hot path.
 - published outbox events: short retention after successful publication;
 - failed outbox events and idempotency keys: longer retention for investigation;
 - stale worker heartbeat: controls when operators can consider a worker dead.
+
+## Владение попыткой (OVM-226)
+
+Production (prod/production) требует PostgreSQL. Перед обработкой берётся
+session advisory lock по attempt_id, который удерживается на отдельной connection
+до завершения обработки, включая retry bookkeeping. Reserve/complete/fail
+используют эту же connection: потерявший её worker не переподключается для записи.
+Pool должен иметь запас соединений для чтения и outbox (минимум два на processor).
+
+Занятая попытка остаётся pending без расходования retry budget. После разрыва
+владельца running без результата превращается в terminal internal_error
+execution_interrupted. Код того же attempt не запускается снова: удалённый
+runtime мог продолжать выполнение после потери соединения. Новое физическое
+исполнение требует нового attempt_id от tasks. Даже retryable failure не даёт
+повторно исполнять тот же durable attempt.
+
+Terminal result неизменяем; duplicate проверяет request_hash и воспроизводит
+сохранённый ответ. Сначала сохраняется result, затем публикуется Kafka result,
+затем подтверждается offset. Если запись outbox/publish/commit оборвалась,
+повтор воспроизводит terminal. Processor удерживает pending message и не fetch
+следующий offset до успешного commit. Commit-before-publish запрещён.
+
+`make ctest COMPONENT_TEST_DSN=...` запускается только на выделенной тестовой
+БД. Проверки охватывают два store, потерю владельца, immutable terminal,
+изменённый payload и crash matrix claim/run/publish/commit. PostgreSQL входит в CI.

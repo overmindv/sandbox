@@ -22,6 +22,9 @@ type PostgresRunStore struct {
 }
 
 func NewPostgresRunStore(ctx context.Context, cfg config.PostgresStore) (*PostgresRunStore, error) {
+	if cfg.MaxOpenConnections == 1 {
+		return nil, errors.New("postgres requires at least two connections for attempt fencing")
+	}
 	if cfg.DSN == "" {
 		return nil, errors.New("postgres dsn is required")
 	}
@@ -49,7 +52,7 @@ func NewPostgresRunStore(ctx context.Context, cfg config.PostgresStore) (*Postgr
 }
 
 func (s *PostgresRunStore) ReserveAttempt(ctx context.Context, req contracts.RunRequest, workerID string) (AttemptReservation, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return AttemptReservation{}, err
 	}
@@ -134,43 +137,23 @@ func (s *PostgresRunStore) ReserveAttempt(ctx context.Context, req contracts.Run
 	}
 
 	var existingSubmissionID string
+	var existingHash string
 	var existingStatus AttemptStatus
 	var resultJSON []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT submission_id::text, status, result_json
+		SELECT submission_id::text, status, result_json, request_hash
 		FROM attempts
 		WHERE attempt_id = $1
-	`, req.AttemptID).Scan(&existingSubmissionID, &existingStatus, &resultJSON)
+	`, req.AttemptID).Scan(&existingSubmissionID, &existingStatus, &resultJSON, &existingHash)
 	if err != nil {
 		return AttemptReservation{}, err
 	}
-	if existingSubmissionID != req.SubmissionID {
+	if existingSubmissionID != req.SubmissionID || existingHash != snapshot.RequestHash {
 		return AttemptReservation{}, ErrAttemptConflict
 	}
 
 	if len(resultJSON) == 0 {
-		if existingStatus != AttemptStatusRunning {
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE attempts
-				SET
-					status = $2,
-					worker_instance_id = NULLIF($3, ''),
-					started_at = $4,
-					completed_at = NULL,
-					lease_expires_at = NULL,
-					last_error_class = NULL,
-					last_error_reason = NULL,
-					last_error_message = NULL,
-					updated_at = $4
-				WHERE attempt_id = $1
-			`, req.AttemptID, AttemptStatusRunning, workerID, now); err != nil {
-				return AttemptReservation{}, err
-			}
-			if err := tx.Commit(); err != nil {
-				return AttemptReservation{}, err
-			}
-			return AttemptReservation{State: AttemptReserved}, nil
-		}
+
 		if err := tx.Commit(); err != nil {
 			return AttemptReservation{}, err
 		}
@@ -193,7 +176,7 @@ func (s *PostgresRunStore) CompleteAttempt(ctx context.Context, result contracts
 		return err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -222,7 +205,7 @@ func (s *PostgresRunStore) CompleteAttempt(ctx context.Context, result contracts
 			worker_instance_id = NULLIF($4, ''),
 			completed_at = $5,
 			updated_at = $5
-		WHERE attempt_id = $1 AND submission_id = $6
+		WHERE attempt_id = $1 AND submission_id = $6 AND result_json IS NULL
 		RETURNING run_id::text
 	`, result.AttemptID, AttemptStatusCompleted, resultJSON, result.WorkerID, now, result.SubmissionID).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -250,7 +233,7 @@ func (s *PostgresRunStore) CompleteAttempt(ctx context.Context, result contracts
 }
 
 func (s *PostgresRunStore) FailAttempt(ctx context.Context, failure AttemptFailure) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -278,7 +261,7 @@ func (s *PostgresRunStore) FailAttempt(ctx context.Context, failure AttemptFailu
 			completed_at = $8,
 			lease_expires_at = NULL,
 			updated_at = $8
-		WHERE attempt_id = $1 AND submission_id = $9
+		WHERE attempt_id = $1 AND submission_id = $9 AND result_json IS NULL
 		RETURNING run_id::text
 	`, failure.AttemptID, status, failure.WorkerInstanceID, failure.DeliveryAttempts, failure.ErrorClass, failure.Reason, failure.Message, failedAt, failure.SubmissionID).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -323,7 +306,7 @@ func (s *PostgresRunStore) GetAttemptResult(ctx context.Context, attemptID strin
 }
 
 func (s *PostgresRunStore) BindIdempotencyKey(ctx context.Context, key string, attemptID string) (IdempotencyKeyBinding, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return IdempotencyKeyBinding{}, err
 	}
@@ -410,7 +393,7 @@ func (s *PostgresRunStore) UpsertWorkerInstance(ctx context.Context, worker Work
 }
 
 func (s *PostgresRunStore) ReplaceWorkerCapabilities(ctx context.Context, workerID string, capabilities []WorkerCapabilityRecord) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -1027,7 +1010,7 @@ func attemptNotFoundOrConflict(ctx context.Context, tx *sql.Tx, attemptID string
 	if existingSubmissionID != submissionID {
 		return ErrAttemptConflict
 	}
-	return ErrAttemptNotFound
+	return ErrAttemptConflict
 }
 
 func (s *PostgresRunStore) getOutboxEvent(ctx context.Context, eventID string) (OutboxEventRecord, bool, error) {

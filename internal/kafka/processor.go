@@ -35,6 +35,7 @@ type RequestSecurityGuard interface {
 }
 
 type Processor struct {
+	pending           *Message
 	Consumer          Consumer
 	Producer          Producer
 	Topics            TopicNames
@@ -93,6 +94,9 @@ func NewProcessor(consumer Consumer, producer Producer, topics TopicNames, worke
 }
 
 func (p *Processor) ProcessOnce(ctx context.Context) error {
+	if !p.CommitPolicy.CommitAfterResultPublish {
+		return ErrCommitBeforeHandling
+	}
 	totalStartedAt := p.now()
 	defer func() {
 		if p.Metrics != nil {
@@ -102,7 +106,16 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 
 	consumeStartedAt := p.now()
 	consumeCtx, endConsume := p.startSpan(ctx, "consume")
-	msg, err := p.Consumer.FetchMessage(ctx)
+	var msg Message
+	var err error
+	if p.pending != nil {
+		msg = *p.pending
+	} else {
+		msg, err = p.Consumer.FetchMessage(ctx)
+		if err == nil {
+			p.pending = &msg
+		}
+	}
 	if err != nil {
 		endConsume(err)
 		if p.Metrics != nil {
@@ -121,21 +134,9 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 	}
 	ctx = consumeCtx
 
-	if !p.CommitPolicy.CommitAfterResultPublish {
-		if err := p.Consumer.CommitMessages(ctx, msg); err != nil {
-			if p.Metrics != nil {
-				p.Metrics.IncMessageFailure("commit_failed")
-			}
-			return err
-		}
-	}
-
 	if err := p.ProcessMessage(ctx, msg); err != nil {
 		if p.Metrics != nil {
 			p.Metrics.IncMessageFailure("process_failed")
-		}
-		if !p.CommitPolicy.CommitAfterResultPublish {
-			return fmt.Errorf("%w: %w", ErrCommitBeforeHandling, err)
 		}
 		return err
 	}
@@ -148,6 +149,7 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	p.pending = nil
 	return nil
 }
 
@@ -231,6 +233,14 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	}
 	finishValidate(nil, "attempt_id", req.AttemptID, "language", req.Language.ID)
 
+	if fencer, ok := p.RunStore.(storage.AttemptFencer); ok {
+		owned, release, err := fencer.AcquireAttempt(ctx, req.AttemptID)
+		if err != nil {
+			return err
+		}
+		defer release()
+		ctx = owned
+	}
 	if p.Handler == nil {
 		return p.handleProcessingError(ctx, msg, req, ErrNoRunRequestHandler)
 	}
@@ -351,6 +361,9 @@ func (p *Processor) publishDeadLetter(ctx context.Context, msg Message, reason s
 }
 
 func (p *Processor) publishTerminalError(ctx context.Context, msg Message, req contracts.RunRequest, decision RetryDecision) error {
+	if decision.Reason == "attempt_conflict" {
+		return p.publishDeadLetter(ctx, msg, decision.Reason, errors.New(decision.Message), false, req)
+	}
 	if decision.Class == ErrorClassValidation || decision.Class == ErrorClassUser {
 		result := p.errorResult(req, statusForErrorClass(decision.Class), decision, false)
 		resultMessage, err := p.messageForResult(result)

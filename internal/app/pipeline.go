@@ -202,6 +202,12 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 		p.logger.Info(ctx, "duplicate attempt result found, republishing known result", "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
 		return p.publishResult(ctx, reservation.Result)
 	case storage.AttemptDuplicateRunning:
+		if _, durable := p.store.(storage.AttemptFencer); durable {
+			// Lock уже принадлежит нам: прежнее выполнение оборвалось. Тот же attempt не запускаем вновь.
+			result := execution.RunResultFromExecution(req, execution.InternalErrorResult("execution interrupted", false), execution.ResultTimingInput{}, p.workerID)
+			result.Error.Code = "execution_interrupted"
+			return p.completeAndPublish(ctx, result)
+		}
 		p.logger.Warn(ctx, "duplicate attempt is already running", "attempt_id", req.AttemptID, "submission_id", req.SubmissionID)
 		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "attempt_in_progress", storage.ErrAttemptInProgress, false)
 	case storage.AttemptReserved:

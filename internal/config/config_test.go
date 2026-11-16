@@ -96,3 +96,14 @@ func clearSandboxEnv(t *testing.T) {
 		}
 	})
 }
+
+func TestProductionRequiresDurableStorage(t *testing.T) {
+	for _, env := range []string{"prod", "production"} {
+		cfg := Default()
+		cfg.App.Environment = env
+		cfg.Storage.Type = "memory"
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires postgres") {
+			t.Fatalf("%s accepted volatile storage: %v", env, err)
+		}
+	}
+}

@@ -400,7 +400,7 @@ func TestProcessorRetryExhaustedPublishesResultDLQAndCommits(t *testing.T) {
 	}
 }
 
-func TestProcessorNonRetryableUserErrorPublishesResultDLQAndCommits(t *testing.T) {
+func TestProcessorAttemptConflictPublishesOnlyDLQ(t *testing.T) {
 	req := validKafkaRunRequest()
 	payload, err := EncodeRunRequest(req)
 	if err != nil {
@@ -432,22 +432,10 @@ func TestProcessorNonRetryableUserErrorPublishesResultDLQAndCommits(t *testing.T
 	if len(consumer.committed) != 1 {
 		t.Errorf("expected one committed message, got %d", len(consumer.committed))
 	}
-	if len(producer.messages) != 2 {
-		t.Errorf("expected result and DLQ messages, got %d", len(producer.messages))
-		return
+	if len(producer.messages) != 1 || producer.messages[0].Topic != testTopics().DeadLetter {
+		t.Fatal("conflict published result")
 	}
-	result, err := DecodeRunResult(producer.messages[0].Value)
-	if err != nil {
-		t.Errorf("decode user error result: %v", err)
-		return
-	}
-	if result.Status != contracts.StatusInvalidRequest {
-		t.Errorf("expected invalid_request result, got %q", result.Status)
-	}
-	if result.Error == nil || result.Error.Code != "attempt_conflict" {
-		t.Errorf("expected attempt_conflict error, got %#v", result.Error)
-	}
-	deadLetter, err := DecodeRunDeadLetter(producer.messages[1].Value)
+	deadLetter, err := DecodeRunDeadLetter(producer.messages[0].Value)
 	if err != nil {
 		t.Errorf("decode user error dead letter: %v", err)
 		return
@@ -678,5 +666,47 @@ func TestProcessorInvalidVersionOmitsEvaluationContext(t *testing.T) {
 		if err != nil || result.Status != contracts.StatusInvalidRequest || result.EvaluationContext != nil {
 			t.Fatalf("invalid rejection: %+v %v", result, err)
 		}
+	}
+}
+
+type failCommitConsumer struct {
+	*fakeConsumer
+	fail bool
+}
+
+func (c *failCommitConsumer) CommitMessages(ctx context.Context, messages ...Message) error {
+	if c.fail {
+		c.fail = false
+		return errors.New("commit unavailable")
+	}
+	return c.fakeConsumer.CommitMessages(ctx, messages...)
+}
+
+func TestProcessorRetainsPendingUntilCommit(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, _ := EncodeRunRequest(req)
+	c := &failCommitConsumer{fakeConsumer: &fakeConsumer{messages: []Message{{Topic: testTopics().Requests, Key: []byte(req.SubmissionID), Value: payload, Offset: 1}, {Offset: 2}}}, fail: true}
+	calls := 0
+	p := testProcessor(t, c, &fakeProducer{}, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error { calls++; return nil }))
+	if err := p.ProcessOnce(context.Background()); err == nil {
+		t.Fatal("expected commit failure")
+	}
+	if err := p.ProcessOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(c.messages) != 1 || len(c.committed) != 1 || c.committed[0].Offset != 1 {
+		t.Fatal("skipped pending offset")
+	}
+}
+
+func TestProcessorRejectsCommitBeforePublish(t *testing.T) {
+	c := &fakeConsumer{messages: []Message{{Offset: 1}}}
+	p := testProcessor(t, c, &fakeProducer{}, nil)
+	p.CommitPolicy.CommitAfterResultPublish = false
+	if err := p.ProcessOnce(context.Background()); !errors.Is(err, ErrCommitBeforeHandling) {
+		t.Fatalf("unsafe policy accepted: %v", err)
+	}
+	if len(c.messages) != 1 || len(c.committed) != 0 {
+		t.Fatal("unsafe policy touched consumer")
 	}
 }

@@ -643,6 +643,9 @@ func (cfg Config) Validate() error {
 	if cfg.App.Name == "" {
 		errs = append(errs, "app.name is required")
 	}
+	if (cfg.App.Environment == "production" || cfg.App.Environment == "prod") && cfg.Storage.Type != "postgres" {
+		errs = append(errs, "production requires postgres storage")
+	}
 	if cfg.App.Environment == "" {
 		errs = append(errs, "app.environment is required")
 	}
