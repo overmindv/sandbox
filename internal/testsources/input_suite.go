@@ -73,6 +73,7 @@ func (p *ObjectStorageProvider) ResolveInputs(ctx context.Context, req contracts
 	if total > 1048576 {
 		return fail("input_suite_too_large", false)
 	}
+	req.PrivateInputs = true
 	req.Execution = &contracts.ExecutionSpec{Mode: contracts.ExecutionMode, Inputs: manifest.Inputs}
 	return req, nil
 }

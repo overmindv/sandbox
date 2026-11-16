@@ -43,7 +43,7 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	if err != nil {
 		t.Errorf("build health request: %v", err)
 	}
-	req.Header.Set(observability.TraceIDHeader, "trace-smoke")
+	req.Header.Set(observability.TraceIDHeader, "11111111-1111-4111-8111-111111111111")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected health status 200, got %d", resp.StatusCode)
 	}
-	if got := resp.Header.Get(observability.TraceIDHeader); got != "trace-smoke" {
+	if got := resp.Header.Get(observability.TraceIDHeader); got != "11111111-1111-4111-8111-111111111111" {
 		t.Errorf("expected trace response header, got %q", got)
 	}
 
@@ -68,7 +68,7 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	if payload["ready"] != true {
 		t.Errorf("expected ready=true, got %#v", payload["ready"])
 	}
-	if payload["trace_id"] != "trace-smoke" {
+	if payload["trace_id"] != "11111111-1111-4111-8111-111111111111" {
 		t.Errorf("expected trace_id in response, got %#v", payload["trace_id"])
 	}
 
@@ -84,7 +84,7 @@ func TestWorkerLifecycleSmoke(t *testing.T) {
 	if !strings.Contains(logBuffer.String(), "worker started") {
 		t.Errorf("expected startup log, got %s", logBuffer.String())
 	}
-	if !strings.Contains(logBuffer.String(), "trace-smoke") {
+	if !strings.Contains(logBuffer.String(), "11111111-1111-4111-8111-111111111111") {
 		t.Errorf("expected trace_id in logs, got %s", logBuffer.String())
 	}
 }

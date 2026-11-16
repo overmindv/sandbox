@@ -3,10 +3,13 @@ package observability
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -55,9 +58,15 @@ func (l *Logger) log(ctx context.Context, level slog.Level, msg string, args ...
 		return
 	}
 	if traceID := TraceIDFromContext(ctx); traceID != "" {
-		args = append(args, "trace_id", traceID)
+		args = append(args, "trace_id", safeTraceID(traceID))
 	}
-	l.inner.Log(ctx, level, msg, args...)
+	safe := append([]any(nil), args...)
+	for i := 1; i < len(safe); i += 2 {
+		if err, ok := safe[i].(error); ok {
+			safe[i] = fmt.Sprintf("%T", err)
+		}
+	}
+	l.inner.Log(ctx, level, msg, safe...)
 }
 
 func WithTraceID(ctx context.Context, traceID string) context.Context {
@@ -95,4 +104,15 @@ func parseLevel(level string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+var tracePattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$`)
+
+// Неизвестный формат correlation ID хешируется, чтобы он не стал каналом raw payload.
+func safeTraceID(value string) string {
+	if tracePattern.MatchString(value) {
+		return value
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:16])
 }

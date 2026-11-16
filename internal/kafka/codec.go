@@ -34,7 +34,7 @@ func DecodeRunEvent(value []byte) (contracts.RunEvent, error) {
 }
 
 func EncodeRunResult(result contracts.RunResult) ([]byte, error) {
-	return json.Marshal(result)
+	return json.Marshal(contracts.RedactDiagnostics(result))
 }
 
 func DecodeRunResult(value []byte) (contracts.RunResult, error) {
@@ -46,6 +46,7 @@ func DecodeRunResult(value []byte) (contracts.RunResult, error) {
 }
 
 func EncodeRunDeadLetter(deadLetter contracts.RunDeadLetter) ([]byte, error) {
+	deadLetter = contracts.RedactDeadLetter(deadLetter)
 	return json.Marshal(deadLetter)
 }
 

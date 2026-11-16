@@ -22,3 +22,23 @@ type RunDeadLetter struct {
 	WorkerID           string            `json:"worker_id,omitempty"`
 	FailedAt           time.Time         `json:"failed_at"`
 }
+
+// RedactDeadLetter исключает недоверенные строки даже из metadata и Kafka key.
+func RedactDeadLetter(value RunDeadLetter) RunDeadLetter {
+	value.SubmissionID = SafeUUID(value.SubmissionID)
+	value.AttemptID = SafeUUID(value.AttemptID)
+	value.OriginalKey = nil
+	value.OriginalHeaders = map[string]string{}
+	value.OriginalPayloadB64 = nil
+	value.TraceID = ""
+	value.Message = "processing failed"
+	return value
+}
+
+// SafeUUID не пропускает произвольный payload вместо идентификатора.
+func SafeUUID(value string) string {
+	if uuidPattern.MatchString(value) {
+		return value
+	}
+	return ""
+}

@@ -327,6 +327,7 @@ func (p requestPipeline) completeInvalidRequest(ctx context.Context, req contrac
 }
 
 func (p requestPipeline) completeAndPublish(ctx context.Context, result contracts.RunResult) error {
+	result = contracts.RedactDiagnostics(result)
 	attempt, ok, err := p.store.GetAttempt(ctx, result.AttemptID)
 	if err != nil {
 		return kafka.NewRetryableProcessingError(kafka.ErrorClassInfra, "storage_get_attempt_failed", err, false)

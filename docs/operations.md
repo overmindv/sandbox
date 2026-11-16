@@ -183,3 +183,18 @@ Worker concurrency:
   the scheduler is ready for concurrent Kafka processing, but do not expect a
   single worker process to use all slots until the processor loop is parallelized
   with ordered/at-least-once-safe commits.
+
+## Приватные diagnostics (OVM-228)
+
+`diagnostics_visibility` private по умолчанию; public только explicit samples без
+закрытого suite. Private logs/error details/case stderr не создают object artifacts.
+Case stdout сохраняется исключительно в доверенном result envelope для checker Tasks.
+Доступ к result topic, outbox и run storage разрешается только worker/tasks ролям;
+публичные consumers и общий operator artifact bucket не должны их читать.
+Отдельные подробные private object artifacts не сохраняются (нет дополнительной копии
+или отдельного TTL). Общая retention/GC данных исполнения — задача OVM-232.
+Обычный DLQ содержит координаты текущего broker record, validated UUID и reason,
+без payload/headers/raw errors. Replay payload из DLQ больше не поддерживается;
+новую попытку должен выдавать Tasks с новым attempt ID.
+Неизвестный формат trace ID в operator logs заменяется стабильным хешем.
+Порядок обновления контракта: Tasks consumer, затем sandbox producer.

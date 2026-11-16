@@ -114,11 +114,12 @@ func TestManagerLeavesSmallLogsInline(t *testing.T) {
 
 func validArtifactRunResult() contracts.RunResult {
 	return contracts.RunResult{
-		SchemaVersion: contracts.RunResultSchemaVersion,
-		SubmissionID:  "22222222-2222-4222-8222-222222222222",
-		AttemptID:     "33333333-3333-4333-8333-333333333333",
-		UserID:        "44444444-4444-4444-8444-444444444444",
-		TaskID:        "55555555-5555-4555-8555-555555555555",
+		DiagnosticsVisibility: "public",
+		SchemaVersion:         contracts.RunResultSchemaVersion,
+		SubmissionID:          "22222222-2222-4222-8222-222222222222",
+		AttemptID:             "33333333-3333-4333-8333-333333333333",
+		UserID:                "44444444-4444-4444-8444-444444444444",
+		TaskID:                "55555555-5555-4555-8555-555555555555",
 		Language: contracts.LanguageSpec{
 			ID:      "python",
 			Version: "3.12",
@@ -133,5 +134,27 @@ func validArtifactRunResult() contracts.RunResult {
 		TraceID:   "trace-artifacts",
 		WorkerID:  "worker-1",
 		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func TestPrivateLogsNeverBecomeArtifacts(t *testing.T) {
+	store, err := objectstore.NewFilesystemStore(objectstore.FilesystemConfig{RootDir: t.TempDir(), Bucket: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(config.ArtifactStorageConfig{Enabled: true, Provider: "filesystem", Bucket: "local", InlineMaxBytes: 0, MaxBytes: 1024}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := validArtifactRunResult()
+	result.DiagnosticsVisibility = "private"
+	result.Logs.Stdout = "SECRET"
+	result.Logs.Stderr = "SECRET"
+	got, err := m.ProcessResult(context.Background(), "run", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Logs.Stdout != "" || got.Logs.Stderr != "" || got.Logs.StdoutArtifact != nil || got.Logs.StderrArtifact != nil {
+		t.Fatal("private artifact created")
 	}
 }

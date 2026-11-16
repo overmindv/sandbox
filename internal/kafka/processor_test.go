@@ -50,8 +50,8 @@ func TestProcessorMalformedMessagePublishesDLQAndCommits(t *testing.T) {
 	if deadLetter.Reason != "malformed_json" {
 		t.Errorf("expected malformed_json reason, got %q", deadLetter.Reason)
 	}
-	if deadLetter.OriginalKey == nil || *deadLetter.OriginalKey != "raw-key" {
-		t.Errorf("expected original key raw-key, got %#v", deadLetter.OriginalKey)
+	if deadLetter.OriginalKey != nil {
+		t.Errorf("expected redacted original key, got %#v", deadLetter.OriginalKey)
 	}
 }
 
@@ -119,8 +119,8 @@ func TestProcessorInvalidRequestPublishesResultDLQAndCommits(t *testing.T) {
 	if deadLetter.Reason != "invalid_request" {
 		t.Errorf("expected invalid_request reason, got %q", deadLetter.Reason)
 	}
-	if deadLetter.OriginalPayloadB64 == nil {
-		t.Error("expected original payload to be preserved")
+	if deadLetter.OriginalPayloadB64 != nil {
+		t.Error("expected original payload to be redacted")
 	}
 }
 
@@ -382,14 +382,14 @@ func TestProcessorRetryExhaustedPublishesResultDLQAndCommits(t *testing.T) {
 		t.Errorf("decode exhausted dead letter: %v", err)
 		return
 	}
-	if deadLetter.OriginalTopic != "code-execution.requests.v1" {
-		t.Errorf("expected original request topic, got %q", deadLetter.OriginalTopic)
+	if deadLetter.OriginalTopic != "code-execution.retry.v1" {
+		t.Errorf("expected broker retry topic, got %q", deadLetter.OriginalTopic)
 	}
-	if deadLetter.OriginalOffset != 10 {
-		t.Errorf("expected original offset 10, got %d", deadLetter.OriginalOffset)
+	if deadLetter.OriginalOffset != 11 {
+		t.Errorf("expected broker offset 11, got %d", deadLetter.OriginalOffset)
 	}
-	if deadLetter.OriginalHeaders[HeaderRetryCount] != "2" {
-		t.Errorf("expected original retry headers, got %#v", deadLetter.OriginalHeaders)
+	if len(deadLetter.OriginalHeaders) != 0 {
+		t.Errorf("expected redacted original headers, got %#v", deadLetter.OriginalHeaders)
 	}
 	metrics := processor.Metrics.Snapshot()
 	if metrics.RetriesExhausted["gojudge_unavailable"] != 1 {

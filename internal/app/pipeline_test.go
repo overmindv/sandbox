@@ -494,6 +494,9 @@ func TestWorkerPipelineStoresLargeStdoutArtifact(t *testing.T) {
 	cfg.Storage.Artifacts.MaxBytes = 1024
 
 	req := validPipelineRunRequest()
+	req.Tests = contracts.TestSpec{}
+	req.Execution = &contracts.ExecutionSpec{Mode: "execution", Inputs: []string{"public"}}
+	req.Metadata = map[string]any{"run_mode": "samples"}
 	payload, err := kafka.EncodeRunRequest(req)
 	if err != nil {
 		t.Errorf("encode request: %v", err)

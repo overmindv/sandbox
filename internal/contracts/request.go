@@ -10,6 +10,8 @@ const (
 )
 
 type RunRequest struct {
+	// PrivateInputs устанавливается только resolver после загрузки закрытого suite.
+	PrivateInputs bool           `json:"-"`
 	SchemaVersion string         `json:"schema_version"`
 	SubmissionID  string         `json:"submission_id"`
 	AttemptID     string         `json:"attempt_id"`

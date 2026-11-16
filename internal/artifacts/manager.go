@@ -49,6 +49,10 @@ func NewManagerFromConfig(cfg config.ArtifactStorageConfig) (*Manager, error) {
 }
 
 func (m *Manager) ProcessResult(ctx context.Context, runID string, result contracts.RunResult) (contracts.RunResult, error) {
+	result = contracts.RedactDiagnostics(result)
+	if result.DiagnosticsVisibility != "public" {
+		return result, nil
+	}
 	if m == nil || !m.cfg.Enabled {
 		return result, nil
 	}

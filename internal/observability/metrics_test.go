@@ -71,7 +71,7 @@ func TestTracerAndAuditEmitStructuredLogs(t *testing.T) {
 
 	output := logs.String()
 	for _, expected := range []string{
-		"trace-observability-test",
+		safeTraceID("trace-observability-test"),
 		"trace span ended",
 		"duration_ms",
 		"security_reject",

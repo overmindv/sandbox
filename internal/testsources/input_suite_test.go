@@ -22,7 +22,7 @@ func TestPrivateInputSuite(t *testing.T) {
 	resolver := NewResolver(NewObjectStorageProvider(config.ObjectStorageTestsConfig{Bucket: "private", KeyPrefix: "suites", MaxBytes: 1024}, store))
 	req := contracts.RunRequest{Execution: &contracts.ExecutionSpec{Mode: "execution", Suite: &ref}}
 	resolved, err := resolver.Resolve(context.Background(), req)
-	if err != nil || len(resolved.Execution.Inputs) != 2 || resolved.Execution.Suite != nil {
+	if err != nil || len(resolved.Execution.Inputs) != 2 || resolved.Execution.Suite != nil || !resolved.PrivateInputs || contracts.DiagnosticsVisibilityForRequest(resolved) != "private" {
 		t.Fatalf("resolve: %v", err)
 	}
 	for _, kind := range []string{"checksum", "version", "unknown", "oversize"} {

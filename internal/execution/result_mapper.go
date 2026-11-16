@@ -58,7 +58,7 @@ type ResultTimingInput struct {
 	TotalMS   int
 }
 
-func RunResultFromExecution(req contracts.RunRequest, execResult ExecutionResult, timing ResultTimingInput, workerID string) contracts.RunResult {
+func rawRunResultFromExecution(req contracts.RunRequest, execResult ExecutionResult, timing ResultTimingInput, workerID string) contracts.RunResult {
 	runMS := execResult.RunMS
 	if runMS == 0 {
 		runMS = int(timing.RunTime.Milliseconds())
@@ -210,4 +210,11 @@ func sumCPUms(cases []ExecutionCaseResult) int {
 		total += run.CPUms
 	}
 	return total
+}
+
+// RunResultFromExecution маркирует trusted case output и удаляет private diagnostics.
+func RunResultFromExecution(req contracts.RunRequest, execResult ExecutionResult, timing ResultTimingInput, workerID string) contracts.RunResult {
+	result := rawRunResultFromExecution(req, execResult, timing, workerID)
+	result.DiagnosticsVisibility = contracts.DiagnosticsVisibilityForRequest(req)
+	return contracts.RedactDiagnostics(result)
 }

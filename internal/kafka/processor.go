@@ -212,7 +212,7 @@ func (p *Processor) ProcessMessage(ctx context.Context, msg Message) error {
 	}
 
 	if err := contracts.ValidateRunRequestWithOptions(req, p.ValidationOptions); err != nil {
-		p.Logger.Warn(ctx, "invalid run request", "attempt_id", req.AttemptID, "error", err)
+		p.Logger.Warn(ctx, "invalid run request", "attempt_id", contracts.SafeUUID(req.AttemptID), "error", err)
 		finishValidate(err, "reason", "invalid_request", "attempt_id", req.AttemptID)
 		return p.publishInvalidRequest(ctx, msg, req, err)
 	}
@@ -679,6 +679,7 @@ func (p *Processor) messageForResult(result contracts.RunResult) (Message, error
 }
 
 func (p *Processor) messageForDeadLetter(deadLetter contracts.RunDeadLetter) (Message, error) {
+	deadLetter = contracts.RedactDeadLetter(deadLetter)
 	value, err := EncodeRunDeadLetter(deadLetter)
 	if err != nil {
 		return Message{}, err
@@ -688,7 +689,7 @@ func (p *Processor) messageForDeadLetter(deadLetter contracts.RunDeadLetter) (Me
 		Topic:   p.Topics.DeadLetter,
 		Key:     messageKey(deadLetter.SubmissionID, deadLetter.AttemptID, deadLetter.OriginalKey),
 		Value:   value,
-		Headers: resultHeaders(deadLetter.SchemaVersion, deadLetter.TraceID, p.WorkerID),
+		Headers: resultHeaders(deadLetter.SchemaVersion, "", p.WorkerID),
 		Time:    p.now(),
 	}, nil
 }
