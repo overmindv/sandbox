@@ -56,16 +56,18 @@ func NewResolver(objectStorage *ObjectStorageProvider) TestSourceProvider {
 func NewProviderFromConfig(cfg config.TestsConfig) (TestSourceProvider, error) {
 	var objectStorage *ObjectStorageProvider
 	if cfg.ObjectStorage.Enabled {
-		store, err := objectstore.New(config.ArtifactStorageConfig{
-			Enabled:          true,
-			Provider:         cfg.ObjectStorage.Provider,
+		if cfg.ObjectStorage.Provider != "s3" {
+			return nil, errors.New("suite reader requires s3 provider")
+		}
+		store, err := objectstore.NewS3Store(objectstore.S3Config{
+			ReadOnly:         true,
 			Bucket:           cfg.ObjectStorage.Bucket,
 			Endpoint:         cfg.ObjectStorage.Endpoint,
 			Region:           cfg.ObjectStorage.Region,
 			AccessKeyID:      cfg.ObjectStorage.AccessKeyID,
 			SecretAccessKey:  cfg.ObjectStorage.SecretAccessKey,
 			KeyPrefix:        cfg.ObjectStorage.KeyPrefix,
-			MaxBytes:         cfg.ObjectStorage.MaxBytes,
+			MaxBytes:         suiteByteLimit(cfg.ObjectStorage.MaxBytes),
 			RequestTimeoutMS: cfg.ObjectStorage.RequestTimeoutMS,
 			ForcePathStyle:   cfg.ObjectStorage.ForcePathStyle,
 		})

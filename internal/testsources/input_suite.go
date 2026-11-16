@@ -3,11 +3,14 @@ package testsources
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"overmindv/sandbox/internal/contracts"
+	"overmindv/sandbox/internal/objectstore"
 	"regexp"
+	"strings"
 )
 
 // ResolveInputs загружает только stdin; эталоны и checker остаются в tasks.
@@ -22,7 +25,10 @@ func (p *ObjectStorageProvider) ResolveInputs(ctx context.Context, req contracts
 		return fail("invalid_input_suite_ref", false)
 	}
 	ref := req.Execution.Suite
-	if !regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`).MatchString(ref.SuiteID) || ref.Version == "" || len(ref.Version) > 64 || !safeSegment(ref.Version) || len(ref.ChecksumSHA256) != 64 {
+	if !regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`).MatchString(ref.SuiteID) || ref.Version == "" || strings.EqualFold(ref.Version, "latest") || len(ref.Version) > 64 || !safeSegment(ref.Version) || len(ref.ChecksumSHA256) != 64 {
+		return fail("invalid_input_suite_ref", false)
+	}
+	if _, err := hex.DecodeString(ref.ChecksumSHA256); err != nil {
 		return fail("invalid_input_suite_ref", false)
 	}
 	key := ref.SuiteID + "/" + ref.Version + "/suite.json"
@@ -31,12 +37,12 @@ func (p *ObjectStorageProvider) ResolveInputs(ctx context.Context, req contracts
 	}
 	payload, err := p.store.Get(ctx, p.cfg.Bucket, key)
 	if err != nil {
+		if errors.Is(err, objectstore.ErrTooLarge) {
+			return fail("input_suite_too_large", false)
+		}
 		return fail("input_suite_fetch_failed", true)
 	}
-	maxBytes := p.cfg.MaxBytes
-	if maxBytes <= 0 || maxBytes > 8*1024*1024 {
-		maxBytes = 8 * 1024 * 1024
-	}
+	maxBytes := suiteByteLimit(p.cfg.MaxBytes)
 	if len(payload) > maxBytes {
 		return fail("input_suite_too_large", false)
 	}

@@ -802,6 +802,9 @@ func (cfg Config) Validate() error {
 	if cfg.Tests.Inline.Enabled && !cfg.FeatureFlags.InlineTests {
 		errs = append(errs, "tests.inline.enabled requires feature_flags.inline_tests=true")
 	}
+	if cfg.Tests.ObjectStorage.Enabled && cfg.Storage.Artifacts.Enabled && cfg.Tests.ObjectStorage.Provider == "s3" && cfg.Storage.Artifacts.Provider == "s3" && strings.TrimSpace(cfg.Tests.ObjectStorage.AccessKeyID) == strings.TrimSpace(cfg.Storage.Artifacts.AccessKeyID) {
+		errs = append(errs, "suite reader and artifact writer credentials must differ")
+	}
 	if cfg.Tests.ObjectStorage.Enabled {
 		if !cfg.FeatureFlags.ObjectStorageTest {
 			errs = append(errs, "tests.object_storage.enabled requires feature_flags.object_storage_tests=true")

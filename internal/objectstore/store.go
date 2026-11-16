@@ -14,9 +14,15 @@ import (
 )
 
 var (
+	ErrTooLarge   = errors.New("object exceeds size limit")
+	ErrForbidden  = errors.New("object access forbidden")
 	ErrDisabled   = errors.New("object store is disabled")
 	ErrInvalidKey = errors.New("invalid object key")
 )
+
+type Reader interface {
+	Get(context.Context, string, string) ([]byte, error)
+}
 
 type Store interface {
 	Provider() string
@@ -81,6 +87,11 @@ func NormalizeKey(key string) (string, error) {
 		return "", fmt.Errorf("%w: key must not contain volume or scheme separator", ErrInvalidKey)
 	}
 
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == ".." {
+			return "", ErrInvalidKey
+		}
+	}
 	cleaned := path.Clean(normalized)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("%w: parent segment in %q", ErrInvalidKey, key)

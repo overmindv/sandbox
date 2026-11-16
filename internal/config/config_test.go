@@ -107,3 +107,16 @@ func TestProductionRequiresDurableStorage(t *testing.T) {
 		}
 	}
 }
+
+func TestSuiteAndArtifactCredentialsDiffer(t *testing.T) {
+	cfg := Default()
+	cfg.Tests.ObjectStorage.Enabled = true
+	cfg.Tests.ObjectStorage.Provider = "s3"
+	cfg.Tests.ObjectStorage.AccessKeyID = "same-principal"
+	cfg.Storage.Artifacts.Enabled = true
+	cfg.Storage.Artifacts.Provider = "s3"
+	cfg.Storage.Artifacts.AccessKeyID = " same-principal "
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "credentials must differ") {
+		t.Fatalf("shared credentials accepted: %v", err)
+	}
+}

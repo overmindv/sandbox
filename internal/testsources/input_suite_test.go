@@ -2,6 +2,7 @@ package testsources
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"overmindv/sandbox/internal/config"
@@ -85,5 +86,38 @@ func TestSharedGradedFixture(t *testing.T) {
 	resultContext := contracts.EvaluationContextForRequest(resolved)
 	if resultContext == nil || resultContext.TaskVersionID != req.Metadata["task_version_id"] || resultContext.SuiteSHA256 != contracts.InputSuiteSHA256([]string{"hello", "private-fixture-input"}) {
 		t.Fatal("resolved context does not prove inputs")
+	}
+}
+
+func TestPrivateSuiteRejectsUnpinnedAndUnsafeRefs(t *testing.T) {
+	store := &countingStore{inner: objectstore.NewMemoryStore("private")}
+	provider := NewObjectStorageProvider(config.ObjectStorageTestsConfig{Bucket: "private", KeyPrefix: "suites"}, store)
+	for _, version := range []string{"", "latest", "../1", "1/../../outside", "https://foreign"} {
+		req := contracts.RunRequest{Execution: &contracts.ExecutionSpec{Mode: "execution", Suite: &contracts.InputSuiteReference{SuiteID: "39b81f29-9d03-4b1a-bdce-af9931eea612", Version: version, ChecksumSHA256: SHA256Hex(nil)}}}
+		if _, err := provider.ResolveInputs(context.Background(), req); err == nil {
+			t.Fatalf("accepted %q", version)
+		}
+	}
+	if store.getCalls != 0 {
+		t.Fatal("unsafe ref fetched")
+	}
+}
+
+func TestSuiteRejectsTraversalFilesAndDecodedBounds(t *testing.T) {
+	for _, kind := range []string{"traversal", "duplicate", "files", "bytes"} {
+		suite := validSuite()
+		switch kind {
+		case "traversal":
+			suite.Files[0].Path = "dir/../hidden.py"
+		case "duplicate":
+			suite.Files = append(suite.Files, suite.Files[0])
+		case "files":
+			suite.Files = make([]contracts.SourceFile, 33)
+		case "bytes":
+			suite.Files[0].ContentB64 = base64.StdEncoding.EncodeToString(make([]byte, 1048577))
+		}
+		if err := ValidateSuite(suite); err == nil {
+			t.Fatalf("accepted %s", kind)
+		}
 	}
 }

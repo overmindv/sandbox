@@ -87,3 +87,27 @@ This keeps both Kafka and worker memory pressure predictable.
 
 Cached entries are keyed by object key and still verify the requested manifest
 checksum before use. Expired entries are evicted lazily on read.
+
+## Закрытые graded inputs (OVM-227)
+
+Graded использует только `execution.suite` и `sandbox.inputs.v1`: UUID suite,
+непустая версия (не latest), обязательный SHA-256 raw manifest. Key вычисляется
+как `<prefix>/<suite_uuid>/<version>/suite.json`; bucket берётся из config.
+Legacy `tests.source=object_storage` не используется для оценивания и сохраняет
+прежний формат ссылок.
+
+Reader имеет только Get-интерфейс. S3 дополнительно блокирует Put, чужой bucket,
+выход из prefix, traversal и HTTP redirects. Ответ читается с hard limit 8 MiB
+(или меньшим config); compressed HTTP response отвергается. ZIP/TAR/GZIP не
+распаковываются и не являются допустимыми manifests. JSON строгий.
+Graded: до 20 inputs, 64 KiB каждый, 1 MiB суммарно. Legacy: до 32 файлов,
+1 MiB/file, 8 MiB суммарно, без повторных и неканонических путей.
+
+`SANDBOX_TESTS_ACCESS_KEY_ID` и
+`SANDBOX_ARTIFACTS_ACCESS_KEY_ID` принадлежат разным principals; одинаковые keys
+при включённых S3 providers отклоняются config validation. Read-only principal
+получает только GetObject в suite prefix, writer — только PutObject в artifact
+prefix. Примеры IAM: `deployments/objectstore/suite-reader.policy.json` и
+`artifact-writer.policy.json`; перед применением заменить bucket/prefix.
+Создание облачных principals и применение IAM выполняет оператор; credentials
+не передаются executor и не хранятся в manifests.

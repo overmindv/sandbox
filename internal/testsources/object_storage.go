@@ -1,11 +1,13 @@
 package testsources
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 	"sync"
@@ -39,7 +41,7 @@ type Suite struct {
 
 type ObjectStorageProvider struct {
 	cfg   config.ObjectStorageTestsConfig
-	store objectstore.Store
+	store objectstore.Reader
 	mu    sync.Mutex
 	cache map[string]cachedSuite
 	now   func() time.Time
@@ -51,7 +53,7 @@ type cachedSuite struct {
 	expiresAt     time.Time
 }
 
-func NewObjectStorageProvider(cfg config.ObjectStorageTestsConfig, store objectstore.Store) *ObjectStorageProvider {
+func NewObjectStorageProvider(cfg config.ObjectStorageTestsConfig, store objectstore.Reader) *ObjectStorageProvider {
 	return &ObjectStorageProvider{
 		cfg:   cfg,
 		store: store,
@@ -100,9 +102,12 @@ func (p *ObjectStorageProvider) Resolve(ctx context.Context, req contracts.RunRe
 
 	payload, err := p.store.Get(ctx, p.cfg.Bucket, key)
 	if err != nil {
+		if errors.Is(err, objectstore.ErrTooLarge) {
+			return contracts.RunRequest{}, SourceError{Reason: "test_suite_too_large", Err: ErrSuiteTooLarge}
+		}
 		return contracts.RunRequest{}, SourceError{Reason: "test_suite_fetch_failed", Retryable: true, Err: err}
 	}
-	if p.cfg.MaxBytes > 0 && len(payload) > p.cfg.MaxBytes {
+	if len(payload) > suiteByteLimit(p.cfg.MaxBytes) {
 		return contracts.RunRequest{}, SourceError{
 			Reason:    "test_suite_too_large",
 			Retryable: false,
@@ -115,10 +120,15 @@ func (p *ObjectStorageProvider) Resolve(ctx context.Context, req contracts.RunRe
 	}
 
 	var suite Suite
-	if err := json.Unmarshal(payload, &suite); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&suite); err != nil {
 		return contracts.RunRequest{}, SourceError{Reason: "test_suite_decode_failed", Retryable: false, Err: err}
 	}
-	if err := ValidateSuiteWithOptions(suite, SuiteValidationOptions{MaxDecodedBytes: p.cfg.MaxBytes}); err != nil {
+	if !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+		return contracts.RunRequest{}, SourceError{Reason: "test_suite_decode_failed", Err: ErrInvalidSuite}
+	}
+	if err := ValidateSuiteWithOptions(suite, SuiteValidationOptions{MaxDecodedBytes: suiteByteLimit(p.cfg.MaxBytes)}); err != nil {
 		reason := "invalid_test_suite"
 		if errors.Is(err, ErrSuiteTooLarge) {
 			reason = "test_suite_too_large"
@@ -168,17 +178,29 @@ func ValidateSuiteWithOptions(suite Suite, opts SuiteValidationOptions) error {
 	if len(suite.Files) == 0 {
 		return fmt.Errorf("%w: at least one file is required", ErrInvalidSuite)
 	}
+	if len(suite.Files) > 32 {
+		return ErrSuiteTooLarge
+	}
+	seen := map[string]bool{}
 	totalDecodedBytes := 0
 	for _, file := range suite.Files {
 		if strings.TrimSpace(file.Path) == "" {
 			return fmt.Errorf("%w: file path is required", ErrInvalidSuite)
+		}
+		normalized, err := objectstore.NormalizeKey(file.Path)
+		if err != nil || normalized != file.Path || len(file.Path) > 128 || seen[file.Path] {
+			return ErrInvalidSuite
+		}
+		seen[file.Path] = true
+		if base64.StdEncoding.DecodedLen(len(file.ContentB64)) > 1048578 {
+			return ErrSuiteTooLarge
 		}
 		content, err := base64.StdEncoding.DecodeString(file.ContentB64)
 		if err != nil {
 			return fmt.Errorf("%w: decode file %q: %w", ErrInvalidSuite, file.Path, err)
 		}
 		totalDecodedBytes += len(content)
-		if opts.MaxDecodedBytes > 0 && totalDecodedBytes > opts.MaxDecodedBytes {
+		if len(content) > 1048576 || totalDecodedBytes > suiteByteLimit(opts.MaxDecodedBytes) {
 			return fmt.Errorf("%w: %w: decoded test bundle is %d bytes, max is %d", ErrInvalidSuite, ErrSuiteTooLarge, totalDecodedBytes, opts.MaxDecodedBytes)
 		}
 		if err := VerifySHA256(content, file.ChecksumSHA256); err != nil {
@@ -288,4 +310,13 @@ func safeSegment(value string) bool {
 		}
 	}
 	return true
+}
+
+// suiteByteLimit задаёт жёсткий предел независимо от локального config.
+func suiteByteLimit(configured int) int {
+	const hardMax = 8 * 1024 * 1024
+	if configured <= 0 || configured > hardMax {
+		return hardMax
+	}
+	return configured
 }

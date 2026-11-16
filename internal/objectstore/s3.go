@@ -24,6 +24,8 @@ const (
 )
 
 type S3Config struct {
+	ReadOnly         bool
+	KeyPrefix        string
 	MaxBytes         int
 	Bucket           string
 	Endpoint         string
@@ -35,6 +37,8 @@ type S3Config struct {
 }
 
 type S3Store struct {
+	readOnly        bool
+	keyPrefix       string
 	maxBytes        int
 	bucket          string
 	endpoint        *url.URL
@@ -73,7 +77,16 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 		return nil, err
 	}
 
+	prefix := strings.Trim(cfg.KeyPrefix, "/")
+	if prefix != "" {
+		normalized, err := NormalizeKey(prefix)
+		if err != nil || normalized != prefix {
+			return nil, ErrInvalidKey
+		}
+	}
 	return &S3Store{
+		readOnly:        cfg.ReadOnly,
+		keyPrefix:       prefix,
 		bucket:          bucket,
 		maxBytes:        cfg.MaxBytes,
 		endpoint:        endpoint,
@@ -82,7 +95,7 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 		secretAccessKey: strings.TrimSpace(cfg.SecretAccessKey),
 		forcePathStyle:  cfg.ForcePathStyle,
 		requestTimeout:  time.Duration(timeoutMS) * time.Millisecond,
-		client:          &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond},
+		client:          &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		now:             func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -95,6 +108,9 @@ func (s *S3Store) Put(ctx context.Context, object Object) (StoredObject, error) 
 	if err := ctx.Err(); err != nil {
 		return StoredObject{}, err
 	}
+	if s.readOnly {
+		return StoredObject{}, ErrForbidden
+	}
 	key, err := NormalizeKey(object.Key)
 	if err != nil {
 		return StoredObject{}, err
@@ -102,6 +118,9 @@ func (s *S3Store) Put(ctx context.Context, object Object) (StoredObject, error) 
 	bucket := normalizeBucket(object.Bucket)
 	if bucket == "" {
 		bucket = s.bucket
+	}
+	if bucket != s.bucket || !s.allowedKey(key) {
+		return StoredObject{}, ErrForbidden
 	}
 	contentType := NormalizeContentType(object.ContentType)
 	payloadHash := Digest(object.Content)
@@ -116,6 +135,7 @@ func (s *S3Store) Put(ctx context.Context, object Object) (StoredObject, error) 
 	}
 	req.ContentLength = int64(len(object.Content))
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	s.sign(req, payloadHash, []string{"content-type", "host", "x-amz-content-sha256", "x-amz-date"})
 
@@ -125,8 +145,7 @@ func (s *S3Store) Put(ctx context.Context, object Object) (StoredObject, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return StoredObject{}, fmt.Errorf("s3 put object failed: status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		return StoredObject{}, fmt.Errorf("s3 put object failed: status=%d", resp.StatusCode)
 	}
 
 	return StoredObject{
@@ -151,6 +170,9 @@ func (s *S3Store) Get(ctx context.Context, bucket string, key string) ([]byte, e
 	if normalizedBucket == "" {
 		normalizedBucket = s.bucket
 	}
+	if normalizedBucket != s.bucket || !s.allowedKey(normalizedKey) {
+		return nil, ErrForbidden
+	}
 	payloadHash := Digest(nil)
 
 	requestCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
@@ -161,6 +183,7 @@ func (s *S3Store) Get(ctx context.Context, bucket string, key string) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	s.sign(req, payloadHash, []string{"host", "x-amz-content-sha256", "x-amz-date"})
 
@@ -170,8 +193,10 @@ func (s *S3Store) Get(ctx context.Context, bucket string, key string) ([]byte, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("s3 get object failed: status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("s3 get object failed: status=%d", resp.StatusCode)
+	}
+	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" && encoding != "identity" {
+		return nil, fmt.Errorf("compressed objects are unsupported")
 	}
 	limit := s.maxBytes
 	if limit <= 0 {
@@ -182,9 +207,13 @@ func (s *S3Store) Get(ctx context.Context, bucket string, key string) ([]byte, e
 		return nil, err
 	}
 	if len(payload) > limit {
-		return nil, fmt.Errorf("object exceeds size limit")
+		return nil, ErrTooLarge
 	}
 	return payload, nil
+}
+
+func (s *S3Store) allowedKey(key string) bool {
+	return s.keyPrefix == "" || strings.HasPrefix(key, s.keyPrefix+"/")
 }
 
 func (s *S3Store) Close() error {

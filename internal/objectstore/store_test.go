@@ -136,3 +136,80 @@ func TestS3StorePutUsesSignedPathStyleRequest(t *testing.T) {
 		t.Errorf("unexpected stored object metadata: %#v", stored)
 	}
 }
+
+func TestS3RejectsForeignBucketAndTraversalBeforeRequest(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; _, _ = w.Write([]byte("data")) }))
+	defer server.Close()
+	store, err := NewS3Store(S3Config{Bucket: "private", Endpoint: server.URL, Region: "local", AccessKeyID: "reader", SecretAccessKey: "test", ForcePathStyle: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []struct{ bucket, key string }{{"foreign", "suite.json"}, {"private", "suites/../outside.json"}} {
+		if _, err = store.Get(context.Background(), v.bucket, v.key); err == nil {
+			t.Fatal("foreign path accepted")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("unsafe path reached S3")
+	}
+}
+
+func TestPrivateS3ReaderBounds(t *testing.T) {
+	for _, mode := range []string{"prefix", "write", "redirect", "compressed", "oversize", "valid"} {
+		t.Run(mode, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if mode == "redirect" {
+					http.Redirect(w, r, "/private/suites/other", http.StatusFound)
+					return
+				}
+				if mode == "compressed" {
+					w.Header().Set("Content-Encoding", "gzip")
+				}
+				w.WriteHeader(http.StatusOK)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				_, _ = w.Write([]byte("12345"))
+			}))
+			defer server.Close()
+			store, err := NewS3Store(S3Config{Bucket: "private", Endpoint: server.URL, Region: "local", AccessKeyID: "reader", SecretAccessKey: "test", ForcePathStyle: true, ReadOnly: true, KeyPrefix: "suites", MaxBytes: 4})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			key := "suites/a"
+			if mode == "prefix" {
+				key = "suites-other/a"
+			}
+			if mode == "write" {
+				_, err = store.Put(context.Background(), Object{Key: key})
+			} else {
+				if mode == "valid" {
+					store.maxBytes = 5
+				}
+				_, err = store.Get(context.Background(), "private", key)
+			}
+			if mode == "valid" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("unsafe response accepted")
+			}
+			if mode == "oversize" && !errors.Is(err, ErrTooLarge) {
+				t.Fatal(err)
+			}
+			if (mode == "prefix" || mode == "write") && calls != 0 {
+				t.Fatal("forbidden access sent")
+			}
+			if mode == "redirect" && calls != 1 {
+				t.Fatal("redirect followed")
+			}
+		})
+	}
+}
