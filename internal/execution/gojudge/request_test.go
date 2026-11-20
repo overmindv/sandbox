@@ -1,6 +1,7 @@
 package gojudge
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -83,6 +84,23 @@ func TestRequestFromExecutionCommandRejectsSecretRuntimeEnvironment(t *testing.T
 	_, err := RequestFromExecutionCommand(command)
 	if err == nil {
 		t.Error("expected secret runtime environment to be rejected")
+	}
+}
+
+func TestGoJudgeRequestDoesNotInheritKafkaSettings(t *testing.T) {
+	t.Setenv("SANDBOX_KAFKA_TLS_KEY_FILE", "/run/secrets/private-kafka-key-marker")
+	t.Setenv("SANDBOX_KAFKA_SASL_PASSWORD_FILE", "/run/secrets/private-kafka-password-marker")
+
+	request, err := RequestFromExecutionCommand(validGoJudgeCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "private-kafka-") || strings.Contains(string(raw), "SANDBOX_KAFKA_") {
+		t.Error("Kafka settings leaked into the runtime request")
 	}
 }
 

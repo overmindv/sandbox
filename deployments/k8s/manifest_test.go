@@ -144,6 +144,41 @@ func TestRuntimeDeploymentHardeningBaseline(t *testing.T) {
 	}
 }
 
+func TestKafkaCredentialsMountedOnlyInWorker(t *testing.T) {
+	for _, name := range []string{"sandbox-worker", "gojudge"} {
+		deployment, err := findManifest(".", "Deployment", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pod := podSpecFromDeployment(deployment)
+		var secretOK, mountOK bool
+		for _, item := range listValue(pod["volumes"]) {
+			volume := mapValue(item)
+			secret := mapValue(volume["secret"])
+			if secret["secretName"] == "sandbox-kafka-client" {
+				if name != "sandbox-worker" {
+					t.Fatal("go-judge received Kafka credential volume")
+				}
+				secretOK = volume["name"] == "kafka-client" && secret["defaultMode"] == 0o440
+			}
+		}
+		for _, item := range listValue(pod["containers"]) {
+			for _, entry := range listValue(mapValue(item)["volumeMounts"]) {
+				mount := mapValue(entry)
+				if mount["mountPath"] == "/run/secrets/sandbox-kafka" {
+					if name != "sandbox-worker" {
+						t.Fatal("go-judge received Kafka credential mount")
+					}
+					mountOK = mount["name"] == "kafka-client" && mount["readOnly"] == true
+				}
+			}
+		}
+		if name == "sandbox-worker" && (!secretOK || !mountOK) {
+			t.Error("worker lacks its read-only Kafka Secret mount")
+		}
+	}
+}
+
 func TestRuntimeNetworkPolicyDeniesAllEgress(t *testing.T) {
 	manifest, err := findManifest(".", "NetworkPolicy", "gojudge-runtime")
 	if err != nil {

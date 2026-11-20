@@ -23,6 +23,8 @@ feature_flags:
   object_storage_artifacts: true
 
 kafka:
+  security:
+    protocol: SSL
   brokers:
     - ${SANDBOX_KAFKA_BROKERS:-kafka:9092}
   client_id: sandbox-worker-prod
