@@ -15,6 +15,7 @@ languages:
       - version: "3.12"
         default: true
         runtime_image: overmindv/sandbox-python:3.12
+        runtime_version: "3.12.16"
         limits_profile: python-default
         test_modes:
           - pytest
@@ -81,6 +82,7 @@ languages:
       - version: "1.26"
         default: true
         runtime_image: overmindv/sandbox-go:1.26
+        runtime_version: "1.26.11"
         limits_profile: go-default
         test_modes:
           - go-test

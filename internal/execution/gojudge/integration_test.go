@@ -3,29 +3,85 @@ package gojudge
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages"
 	"overmindv/sandbox/internal/languages/python"
 )
+
+func TestLiveGoJudgeRuntimeVersions(t *testing.T) {
+	if os.Getenv("SANDBOX_GOJUDGE_INTEGRATION") != "1" {
+		t.Skip("set SANDBOX_GOJUDGE_INTEGRATION=1 to run live go-judge integration test")
+	}
+	manifest, err := languages.LoadManifest("configs/languages.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(liveGoJudgeConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, language := range manifest.Languages {
+		if !language.Enabled {
+			continue
+		}
+		var argv []string
+		var prefix string
+		switch language.ID {
+		case "python":
+			argv = []string{"python3", "--version"}
+			prefix = "Python "
+		case "go":
+			argv = []string{"/usr/local/go/bin/go", "env", "GOVERSION"}
+			prefix = "go"
+		default:
+			continue
+		}
+		t.Run(language.ID, func(t *testing.T) {
+			var want string
+			for _, version := range language.Versions {
+				if version.Default {
+					want = version.RuntimeVersion
+					break
+				}
+			}
+			if want == "" {
+				t.Fatal("runtime_version is missing from the manifest")
+			}
+			cmd := validGoJudgeCommand()
+			cmd.Argv = argv
+			cmd.Environment = map[string]string{"GOTOOLCHAIN": "local"}
+			cmd.CopyOut = nil
+			req, err := RequestFromExecutionCommand(cmd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			results, err := client.Run(ctx, req)
+			if err != nil || len(results) != 1 {
+				t.Fatal("version probe failed", err)
+			}
+			got := strings.TrimSpace(results[0].Files[stdoutName])
+			if results[0].Status != StatusAccepted || got != prefix+want {
+				t.Errorf("want %q, got %q with status %q", prefix+want, got, results[0].Status)
+			}
+		})
+	}
+}
 
 func TestLiveGoJudgeRunsPythonPytest(t *testing.T) {
 	if os.Getenv("SANDBOX_GOJUDGE_INTEGRATION") != "1" {
 		t.Skip("set SANDBOX_GOJUDGE_INTEGRATION=1 to run live go-judge integration test")
 	}
 
-	baseURL := os.Getenv("SANDBOX_GOJUDGE_BASE_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:5050"
-	}
-	executor, err := NewExecutor(config.GoJudgeClient{
-		BaseURL:            baseURL,
-		RequestTimeoutMS:   10000,
-		MaxIdleConnections: 2,
-	})
+	executor, err := NewExecutor(liveGoJudgeConfig())
 	if err != nil {
 		t.Errorf("new go-judge executor: %v", err)
 		return
@@ -73,15 +129,21 @@ func TestLiveGoJudgeRunsGoTest(t *testing.T) {
 		t.Skip("set SANDBOX_GOJUDGE_INTEGRATION=1 to run live go-judge integration test")
 	}
 
-	baseURL := os.Getenv("SANDBOX_GOJUDGE_BASE_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:5050"
+	limits, err := config.LoadLimits("configs/limits.yaml")
+	if err != nil {
+		t.Fatal(err)
 	}
-	executor, err := NewExecutor(config.GoJudgeClient{
-		BaseURL:            baseURL,
-		RequestTimeoutMS:   10000,
-		MaxIdleConnections: 2,
-	})
+	profile, ok := limits.Profiles["go-default"]
+	if !ok {
+		t.Fatal("go-default limits are missing")
+	}
+	cfg := liveGoJudgeConfig()
+	cfg.CompilerURL = os.Getenv("SANDBOX_GOJUDGE_COMPILER_URL")
+	if cfg.CompilerURL == "" {
+		t.Skip("set SANDBOX_GOJUDGE_COMPILER_URL for the cold Go build")
+	}
+	cfg.RequestTimeoutMS = profile.WallMS + 5000
+	executor, err := NewExecutor(cfg)
 	if err != nil {
 		t.Errorf("new go-judge executor: %v", err)
 		return
@@ -92,6 +154,11 @@ func TestLiveGoJudgeRunsGoTest(t *testing.T) {
 	command.AttemptID = "live-go-test"
 	command.Language = contracts.LanguageSpec{ID: "go", Version: "1.26"}
 	command.Adapter = "go"
+	command.RuntimeLimits = execution.RuntimeLimits{
+		CPUms: profile.CPUms, WallMS: profile.WallMS, MemoryBytes: int64(profile.MemoryMB) << 20,
+		PIDs: profile.PIDs, StdoutBytes: profile.StdoutBytes, StderrBytes: profile.StderrBytes,
+		WorkspaceBytes: int64(profile.WorkspaceBytes),
+	}
 	command.Argv = []string{"/usr/local/go/bin/go", "test", "-json", "-p", "1", "./..."}
 	command.Environment = map[string]string{
 		"CGO_ENABLED": "0",
@@ -122,7 +189,7 @@ func TestLiveGoJudgeRunsGoTest(t *testing.T) {
 	}
 	command.TestMode = contracts.TestModeGoTest
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(profile.WallMS)*time.Millisecond+executor.BuildAllowance(command))
 	defer cancel()
 	result, err := executor.Execute(ctx, command)
 	if err != nil {
@@ -134,5 +201,17 @@ func TestLiveGoJudgeRunsGoTest(t *testing.T) {
 	}
 	if result.TestsPassed != 1 {
 		t.Errorf("expected one passed Go test case, got %#v", result)
+	}
+}
+
+func liveGoJudgeConfig() config.GoJudgeClient {
+	baseURL := os.Getenv("SANDBOX_GOJUDGE_BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:5050"
+	}
+	return config.GoJudgeClient{
+		BaseURL:            baseURL,
+		RequestTimeoutMS:   10000,
+		MaxIdleConnections: 2,
 	}
 }

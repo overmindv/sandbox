@@ -22,13 +22,14 @@ type LanguageConfig struct {
 }
 
 type LanguageVersionConfig struct {
-	Version       string                  `yaml:"version"`
-	Default       bool                    `yaml:"default"`
-	RuntimeImage  string                  `yaml:"runtime_image"`
-	LimitsProfile string                  `yaml:"limits_profile"`
-	TestModes     []string                `yaml:"test_modes"`
-	FilePolicy    LanguageFilePolicy      `yaml:"file_policy"`
-	Execution     LanguageExecutionConfig `yaml:"execution"`
+	Version        string                  `yaml:"version"`
+	Default        bool                    `yaml:"default"`
+	RuntimeImage   string                  `yaml:"runtime_image"`
+	RuntimeVersion string                  `yaml:"runtime_version,omitempty"`
+	LimitsProfile  string                  `yaml:"limits_profile"`
+	TestModes      []string                `yaml:"test_modes"`
+	FilePolicy     LanguageFilePolicy      `yaml:"file_policy"`
+	Execution      LanguageExecutionConfig `yaml:"execution"`
 }
 
 type LanguageFilePolicy struct {

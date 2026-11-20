@@ -54,9 +54,6 @@ services:
     build: &gojudge-build
       context: .
       dockerfile: deployments/docker/Dockerfile.gojudge-runtime
-      args:
-        GOJUDGE_IMAGE: ${SANDBOX_GOJUDGE_IMAGE:-criyle/go-judge:latest}
-        GO_RUNTIME_VERSION: ${SANDBOX_GO_VERSION:-1.26}
     image: ${SANDBOX_GOJUDGE_LOCAL_IMAGE:-overmindv/sandbox-gojudge:local}
     container_name: sandbox-gojudge
     restart: unless-stopped

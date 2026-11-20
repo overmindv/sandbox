@@ -207,6 +207,19 @@ func TestManifestRejectsSecretRuntimeEnvironment(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsRuntimeVersionOutsideContract(t *testing.T) {
+	manifest, err := languages.LoadManifest("configs/languages.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"3.13.5", "3.12", "3.12."} {
+		manifest.Languages[0].Versions[0].RuntimeVersion = value
+		if err := languages.ValidateManifest(manifest); err == nil {
+			t.Errorf("accepted runtime version %q outside the Python contract", value)
+		}
+	}
+}
+
 func testRegistry(t *testing.T) *languages.Registry {
 	t.Helper()
 	manifest, err := languages.LoadManifest("configs/languages.yaml")

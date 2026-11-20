@@ -89,10 +89,30 @@ Run a local go-judge first, for example on `http://localhost:5050`, then execute
 ```powershell
 $env:SANDBOX_GOJUDGE_INTEGRATION = "1"
 $env:SANDBOX_GOJUDGE_BASE_URL = "http://localhost:5050"
+$env:SANDBOX_GOJUDGE_COMPILER_URL = "http://localhost:5051"
 $env:GOCACHE = Join-Path (Get-Location) ".gocache"
-go test ./internal/execution/gojudge -run TestLiveGoJudgeRunsPythonPytest
+go test ./internal/execution/gojudge -run '^TestLiveGoJudge'
 ```
 
 The live Python test expects the go-judge runtime to have `python3` and `pytest`
 available. Go E2E requests require `go1.26`; the local Docker Compose runtime
 image `overmindv/sandbox-gojudge:local` installs both Python and Go.
+
+The runtime Dockerfile pins the base images. Pytest and its dependencies are
+installed from hashed wheels. The Python standard library is precompiled so
+read-only runners do not recompile modules on each launch. The go-judge binary
+is built with the dependency
+versions in `runtimes/gojudge/go.mod` and `go.sum`. Requests still use Python
+`3.12` and Go `1.26`; `runtime_version` in `configs/languages.yaml` records the exact versions
+tested by `TestLiveGoJudgeRuntimeVersions`. The legacy `runtime_image` field
+does not select an image for the go-judge HTTP executor. Use the published
+release image by digest when deploying to a shared environment.
+
+On local Linux amd64 Docker, 12 alternating requests to each image gave
+the following wall-time medians for a single input and a single pytest case:
+
+| Image | Python input | Pytest |
+| --- | ---: | ---: |
+| Python 3.13.5, pytest 8.3.5 | 39 ms | 250 ms |
+| Python 3.12.16, pytest 9.2.0, before precompilation | 37 ms | 453 ms |
+| Python 3.12.16, pytest 9.2.0, after precompilation | 41 ms | 348 ms |

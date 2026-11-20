@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -13,6 +15,8 @@ import (
 )
 
 const ManifestSchemaVersion = "sandbox.languages.v1"
+
+var runtimeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 func LoadManifest(path string) (config.LanguageRegistryConfig, error) {
 	resolvedPath, err := resolveManifestPath(path)
@@ -80,6 +84,11 @@ func ValidateManifest(manifest config.LanguageRegistryConfig) error {
 			}
 			if version.RuntimeImage == "" {
 				return fmt.Errorf("language %q@%s runtime_image is required", language.ID, version.Version)
+			}
+			if version.RuntimeVersion != "" &&
+				(!runtimeVersionPattern.MatchString(version.RuntimeVersion) ||
+					!strings.HasPrefix(version.RuntimeVersion, version.Version+".")) {
+				return fmt.Errorf("language %q@%s runtime_version must match major, minor and patch", language.ID, version.Version)
 			}
 			if version.Execution.WorkingDir == "" {
 				return fmt.Errorf("language %q@%s working_dir is required", language.ID, version.Version)
