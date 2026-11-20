@@ -28,11 +28,14 @@ Set `SANDBOX_GOJUDGE_COMPILER_URL` to the internal Go compiler endpoint.
 Compose and the Kubernetes manifests configure a separate go-judge for it.
 The worker compiles once per execution request, then runs the binary with the
 original input, CPU, wall, memory, process and output limits for each case.
-Python and the legacy `go test` path do not use the compiler endpoint.
+Legacy `go-test` requests also compile once. The runner executes one test
+binary at a time in its package directory, with a fresh workspace per package.
+CPU, wall time and captured output are charged to the same job budget.
+Python does not use the compiler endpoint.
 
 The compiler is offline and uses a per-sandbox cache in tmpfs. Its file limit
-is 32 MiB; the worker accepts a compiled binary of up to 8 MiB. The runner
-receives the binary through go-judge's file API. The worker deletes both copies
+is 32 MiB. The Go test bundle is capped at 24 MiB and each binary at 8 MiB.
+The runner receives the binary through go-judge's file API. The worker deletes both copies
 after use. The server expires files after two minutes if cleanup is interrupted.
 Each file ID is used only on the connection that produced it. Connect the
 worker directly to the go-judge service, without a per-request HTTP proxy.
@@ -60,8 +63,8 @@ go-judge returns one result item for the single command. The executor collects:
 - `exitStatus -> ExitCode`
 
 For Python pytest commands, the raw result is passed into the Python pytest
-parser. For Go commands with `tests.mode=go-test`, the raw `go test -json`
-stream is passed into the Go parser. Normal test failures become `failed`, not
+parser. For Go commands with `tests.mode=go-test`, the JSON stream from
+`test2json` is passed into the Go parser. Normal test failures become `failed`, not
 `internal_error`.
 
 ## Status Mapping

@@ -22,7 +22,8 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
-	if e.compiler != nil && command.Adapter == golang.AdapterName && execution.IsExecutionMode(command) {
+	if e.compiler != nil && command.Adapter == golang.AdapterName &&
+		(execution.IsExecutionMode(command) || command.TestMode == contracts.TestModeGoTest) {
 		return goCompileBudget + goRunHTTPReserve + goCleanupReserve
 	}
 	return 0
@@ -80,11 +81,16 @@ func phaseError(parent context.Context, err error, phase string) error {
 }
 
 func (e *Executor) buildGo(ctx context.Context, id string, input map[string]MemoryFile) ([]byte, *execution.ExecutionResult, error) {
-	build := execution.ExecutionCommand{
-		Argv: []string{
-			"/usr/local/go/bin/go", "build", "-buildmode=exe", "-mod=readonly", "-trimpath", "-p=2",
-			"-ldflags=-s -w", "-o", goArtifactName, ".",
-		},
+	build := goBuildCommand(
+		"/usr/local/go/bin/go", "build", "-buildmode=exe", "-mod=readonly", "-trimpath", "-p=2",
+		"-ldflags=-s -w", "-o", goArtifactName, ".",
+	)
+	return e.buildGoArtifact(ctx, id, build, input, goArtifactName, maxArtifactBytes)
+}
+
+func goBuildCommand(argv ...string) execution.ExecutionCommand {
+	return execution.ExecutionCommand{
+		Argv: argv,
 		Environment: map[string]string{
 			"CGO_ENABLED": "0",
 			"GOCACHE":     "/tmp/go-build",
@@ -101,8 +107,15 @@ func (e *Executor) buildGo(ctx context.Context, id string, input map[string]Memo
 			PIDs: 64, StdoutBytes: 32768, StderrBytes: 32768,
 		},
 	}
-	cmd := baseCommand(build, input, nil, maxArtifactBytes, "")
-	cmd.CopyOutCached = []string{goArtifactName}
+}
+
+func (e *Executor) buildGoArtifact(ctx context.Context, id string, build execution.ExecutionCommand, input map[string]MemoryFile, name string, maxBytes int64) ([]byte, *execution.ExecutionResult, error) {
+	cmd := baseCommand(build, input, nil, maxBytes, "")
+	cached := name
+	if name != goArtifactName {
+		cached = optionalCopyOut(name)
+	}
+	cmd.CopyOutCached = []string{cached}
 	compiler, closeCompiler := e.compiler.fileSession()
 	defer closeCompiler()
 	res, err := compiler.Run(ctx, Request{RequestID: id, Cmd: []Command{cmd}})
@@ -112,17 +125,24 @@ func (e *Executor) buildGo(ctx context.Context, id string, input map[string]Memo
 	if ValidateResponse(res) != nil {
 		return nil, nil, ErrProtocol
 	}
-	artifactID := res[0].FileIDs[goArtifactName]
+	artifactID := res[0].FileIDs[name]
 	if validFileID(artifactID) {
 		defer compiler.deleteArtifact(ctx, artifactID)
 	}
 	if res[0].Status != StatusAccepted {
+		if name != goArtifactName && res[0].Status == StatusNonzeroExitStatus && res[0].ExitStatus == 2 {
+			return nil, nil, fmt.Errorf("%w: Go test compiler could not prepare artifacts", ErrInfrastructure)
+		}
 		verdict := ExecutionResultFromResponse(build, res[0])
 		if res[0].Status == StatusNonzeroExitStatus {
-			verdict = withGoJudgeError(verdict, contracts.StatusCompileError, "go_compile_error", "go build failed", false)
+			verdict = withGoJudgeError(verdict, contracts.StatusCompileError, "go_compile_error", "Go compilation failed", false)
 		}
 		return nil, &verdict, nil
 	}
-	data, err := compiler.getArtifact(ctx, artifactID)
+	if name == goArtifactName {
+		data, err := compiler.getArtifact(ctx, artifactID)
+		return data, nil, err
+	}
+	data, err := compiler.readArtifact(ctx, artifactID, maxBytes)
 	return data, nil, err
 }

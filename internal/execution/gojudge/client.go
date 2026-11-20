@@ -196,6 +196,9 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 		return execution.ExecutionResult{}, err
 	}
 	if e.BuildAllowance(command) != 0 {
+		if !execution.IsExecutionMode(command) {
+			return e.executeCompiledGoTests(ctx, command, request)
+		}
 		return e.executeCompiledGo(ctx, command, request)
 	}
 	return executeRequest(ctx, e.client, command, request)

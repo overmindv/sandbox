@@ -40,6 +40,17 @@ func (c *Client) fileSession() (*Client, func()) {
 }
 
 func (c *Client) getArtifact(ctx context.Context, id string) ([]byte, error) {
+	data, err := c.readArtifact(ctx, id, maxArtifactBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !isELF(data) {
+		return nil, ErrProtocol
+	}
+	return data, nil
+}
+
+func (c *Client) readArtifact(ctx context.Context, id string, maxBytes int64) ([]byte, error) {
 	if !validFileID(id) {
 		return nil, ErrProtocol
 	}
@@ -52,7 +63,7 @@ func (c *Client) getArtifact(ctx context.Context, id string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.ContentLength > maxArtifactBytes {
+	if resp.ContentLength > maxBytes {
 		return nil, ErrProtocol
 	}
 	var data []byte
@@ -60,19 +71,19 @@ func (c *Client) getArtifact(ctx context.Context, id string) ([]byte, error) {
 		data = make([]byte, resp.ContentLength)
 		_, err = io.ReadFull(resp.Body, data)
 	} else {
-		data, err = io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytes+1))
+		data, err = io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: read compiled artifact", ErrInfrastructure)
 	}
-	if len(data) > maxArtifactBytes || !bytes.HasPrefix(data, []byte("\x7fELF")) {
+	if int64(len(data)) > maxBytes {
 		return nil, ErrProtocol
 	}
 	return data, nil
 }
 
 func (c *Client) putArtifact(ctx context.Context, data []byte) (string, error) {
-	if len(data) > maxArtifactBytes || !bytes.HasPrefix(data, []byte("\x7fELF")) {
+	if len(data) > maxArtifactBytes || !isELF(data) {
 		return "", ErrProtocol
 	}
 	var envelope bytes.Buffer
@@ -106,6 +117,10 @@ func (c *Client) putArtifact(ctx context.Context, data []byte) (string, error) {
 		return "", ErrProtocol
 	}
 	return id, nil
+}
+
+func isELF(data []byte) bool {
+	return bytes.HasPrefix(data, []byte("\x7fELF"))
 }
 
 func (c *Client) deleteArtifact(ctx context.Context, id string) {

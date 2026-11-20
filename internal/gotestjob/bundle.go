@@ -5,6 +5,7 @@ import "strconv"
 const (
 	BundleName     = "_sandbox_go_tests.tar"
 	IndexName      = "packages.json"
+	RunBinaryName  = "_sandbox_go_test"
 	MaxPackages    = 64
 	MaxIndexBytes  = 32 << 10
 	MaxBinaryBytes = 8 << 20
