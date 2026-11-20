@@ -53,20 +53,21 @@ func (h requestExecutor) HandleJob(ctx context.Context, job scheduler.Job) (any,
 }
 
 type requestPipeline struct {
-	legacyHarness bool
-	dispatcher    *scheduler.Dispatcher
-	producer      kafka.Producer
-	topics        kafka.TopicNames
-	languages     *languages.Registry
-	workerID      string
-	security      security.Policy
-	store         storage.RunStore
-	artifacts     *artifacts.Manager
-	tests         testsources.TestSourceProvider
-	metrics       *observability.SchedulerMetrics
-	logger        *observability.Logger
-	tracer        *observability.Tracer
-	audit         *observability.AuditLogger
+	legacyHarness  bool
+	buildAllowance func(execution.ExecutionCommand) time.Duration
+	dispatcher     *scheduler.Dispatcher
+	producer       kafka.Producer
+	topics         kafka.TopicNames
+	languages      *languages.Registry
+	workerID       string
+	security       security.Policy
+	store          storage.RunStore
+	artifacts      *artifacts.Manager
+	tests          testsources.TestSourceProvider
+	metrics        *observability.SchedulerMetrics
+	logger         *observability.Logger
+	tracer         *observability.Tracer
+	audit          *observability.AuditLogger
 }
 
 func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, storage.RunStore, error) {
@@ -172,6 +173,11 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		tracer:        tracer,
 		audit:         audit,
 	}
+	if compiler, ok := executor.(interface {
+		BuildAllowance(execution.ExecutionCommand) time.Duration
+	}); ok {
+		handler.buildAllowance = compiler.BuildAllowance
+	}
 	processor, err := kafka.NewProcessor(deps.Consumer, deps.Producer, topics, cfg.App.WorkerID, handler, logger)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create kafka processor: %w", err)
@@ -276,6 +282,9 @@ func (p requestPipeline) HandleRunRequest(ctx context.Context, envelope kafka.Me
 	finishPrepare(nil, "stage", "language")
 
 	timeout := time.Duration(req.Limits.Wallms) * time.Millisecond
+	if p.buildAllowance != nil {
+		timeout += p.buildAllowance(command)
+	}
 	executeStartedAt := time.Now()
 	executeCtx, endExecute := p.startSpan(ctx, "execute", "attempt_id", req.AttemptID, "language", req.Language.ID)
 	jobResult, err := p.dispatcher.DispatchAndWait(executeCtx, scheduler.Job{

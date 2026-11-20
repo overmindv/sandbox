@@ -29,6 +29,7 @@ type Command struct {
 	ProcLimit       int                   `json:"procLimit,omitempty"`
 	CopyIn          map[string]MemoryFile `json:"copyIn,omitempty"`
 	CopyOut         []string              `json:"copyOut,omitempty"`
+	CopyOutCached   []string              `json:"copyOutCached,omitempty"`
 	CopyOutMax      int64                 `json:"copyOutMax,omitempty"`
 	CopyOutTruncate bool                  `json:"copyOutTruncate,omitempty"`
 }
@@ -40,7 +41,8 @@ type FileDescriptor struct {
 }
 
 type MemoryFile struct {
-	Content string `json:"content"`
+	Content *string `json:"content,omitempty"`
+	FileID  string  `json:"fileId,omitempty"`
 }
 
 func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, error) {
@@ -73,7 +75,8 @@ func RequestFromExecutionCommand(command execution.ExecutionCommand) (Request, e
 		if err != nil {
 			return Request{}, fmt.Errorf("copyIn path %q: %w", file.Path, err)
 		}
-		copyIn[normalized] = MemoryFile{Content: string(file.Content)}
+		content := string(file.Content)
+		copyIn[normalized] = MemoryFile{Content: &content}
 	}
 
 	copyOut := make([]string, 0, len(command.CopyOut))

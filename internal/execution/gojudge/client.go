@@ -27,6 +27,7 @@ var (
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
+	transport  *http.Transport
 }
 
 type HTTPError struct {
@@ -50,8 +51,8 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse go-judge base_url: %w", err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("go-judge base_url must use http or https")
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("go-judge base_url must be an absolute HTTP URL")
 	}
 
 	timeout := time.Duration(cfg.RequestTimeoutMS) * time.Millisecond
@@ -64,13 +65,15 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 	}
 
 	transport := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		MaxIdleConns:        maxIdle,
 		MaxIdleConnsPerHost: maxIdle,
 		IdleConnTimeout:     90 * time.Second,
 	}
 
 	return &Client{
-		baseURL: parsed,
+		baseURL:   parsed,
+		transport: transport,
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -159,7 +162,8 @@ func (c *Client) endpoint(path string) string {
 }
 
 type Executor struct {
-	client *Client
+	client   *Client
+	compiler *Client
 }
 
 func NewExecutor(cfg config.GoJudgeClient) (*Executor, error) {
@@ -167,7 +171,20 @@ func NewExecutor(cfg config.GoJudgeClient) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Executor{client: client}, nil
+	executor := &Executor{client: client}
+	if strings.TrimSpace(cfg.CompilerURL) != "" {
+		compiler, err := NewClient(config.GoJudgeClient{
+			BaseURL: cfg.CompilerURL, RequestTimeoutMS: int(goCompileBudget / time.Millisecond),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("configure Go compiler: %w", err)
+		}
+		if compiler.baseURL.String() == client.baseURL.String() {
+			return nil, errors.New("Go compiler and runner must use separate endpoints")
+		}
+		executor.compiler = compiler
+	}
+	return executor, nil
 }
 
 func (e *Executor) Execute(ctx context.Context, command execution.ExecutionCommand) (execution.ExecutionResult, error) {
@@ -178,7 +195,14 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	if err != nil {
 		return execution.ExecutionResult{}, err
 	}
-	results, err := e.client.Run(ctx, request)
+	if e.BuildAllowance(command) != 0 {
+		return e.executeCompiledGo(ctx, command, request)
+	}
+	return executeRequest(ctx, e.client, command, request)
+}
+
+func executeRequest(ctx context.Context, client *Client, command execution.ExecutionCommand, request Request) (execution.ExecutionResult, error) {
+	results, err := client.Run(ctx, request)
 	if errors.Is(err, ErrProtocol) {
 		return protocolErrorResult(), nil
 	}

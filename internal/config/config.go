@@ -141,6 +141,7 @@ type FakeExecutor struct {
 
 type GoJudgeClient struct {
 	BaseURL            string `yaml:"base_url"`
+	CompilerURL        string `yaml:"compiler_url"`
 	RequestTimeoutMS   int    `yaml:"request_timeout_ms"`
 	MaxIdleConnections int    `yaml:"max_idle_connections"`
 }
@@ -486,6 +487,9 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("SANDBOX_GOJUDGE_BASE_URL"); value != "" {
 		cfg.Executor.GoJudge.BaseURL = value
+	}
+	if value := os.Getenv("SANDBOX_GOJUDGE_COMPILER_URL"); value != "" {
+		cfg.Executor.GoJudge.CompilerURL = value
 	}
 	if err := applyIntEnv("SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS", &cfg.Executor.ClientTimeoutMS); err != nil {
 		return err

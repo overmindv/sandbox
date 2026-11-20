@@ -34,7 +34,8 @@ func TestRequestFromExecutionCommandMapsCopyInCollectorsAndLimits(t *testing.T) 
 	if !containsEnv(cmd.Env, "PATH=") {
 		t.Errorf("expected PATH env, got %#v", cmd.Env)
 	}
-	if cmd.CopyIn["solution.py"].Content != "def add(a, b):\n    return a + b\n" {
+	content := cmd.CopyIn["solution.py"].Content
+	if content == nil || *content != "def add(a, b):\n    return a + b\n" {
 		t.Errorf("expected solution.py copyIn, got %#v", cmd.CopyIn)
 	}
 	if !containsString(cmd.CopyOut, ".sandbox/pytest-report.json?") {
