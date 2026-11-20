@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -26,6 +27,8 @@ func TestKubernetesManifestsParseAndContainRequiredObjects(t *testing.T) {
 		"Deployment/sandbox-worker":              false,
 		"Service/gojudge":                        false,
 		"Deployment/gojudge":                     false,
+		"Service/gojudge-compiler":               false,
+		"Deployment/gojudge-compiler":            false,
 		"HorizontalPodAutoscaler/sandbox-worker": false,
 		"PodDisruptionBudget/sandbox-worker":     false,
 		"NetworkPolicy/sandbox-worker":           false,
@@ -163,7 +166,7 @@ func TestWorkerShutdownFitsTerminationGracePeriod(t *testing.T) {
 }
 
 func TestKafkaCredentialsMountedOnlyInWorker(t *testing.T) {
-	for _, name := range []string{"sandbox-worker", "gojudge"} {
+	for _, name := range []string{"sandbox-worker", "gojudge", "gojudge-compiler"} {
 		deployment, err := findManifest(".", "Deployment", name)
 		if err != nil {
 			t.Fatal(err)
@@ -197,6 +200,40 @@ func TestKafkaCredentialsMountedOnlyInWorker(t *testing.T) {
 	}
 }
 
+func TestCompilerHasSeparateResourceProfile(t *testing.T) {
+	for _, profile := range []struct {
+		name string
+		cap  string
+	}{{"gojudge", "1048576"}, {"gojudge-compiler", "33554432"}} {
+		deployment, err := findManifest(".", "Deployment", profile.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pod := podSpecFromDeployment(deployment)
+		container, ok := containerByName(pod, "gojudge")
+		if !ok {
+			t.Fatal("missing go-judge container", profile.name)
+		}
+		args := stringList(container["args"])
+		for flag, value := range map[string]string{
+			"-output-limit": profile.cap, "-copy-out-limit": "1048576", "-file-timeout": "2m",
+			"-tmp-fs-param": "size=128m,nr_inodes=4096",
+		} {
+			i := slices.Index(args, flag)
+			if i < 0 || i+1 >= len(args) || args[i+1] != value {
+				t.Error("unexpected resource flag", profile.name, flag)
+			}
+		}
+		if pod["automountServiceAccountToken"] != false || !containsString(args, "-no-fallback") ||
+			len(listValue(container["env"])) != 0 || len(listValue(container["envFrom"])) != 0 {
+			t.Error("runtime must not receive credentials or fall back to host execution", profile.name)
+		}
+		if mapValue(pod["nodeSelector"])["kubernetes.io/arch"] != "amd64" {
+			t.Error("compiler and runner must use the release image architecture", profile.name)
+		}
+	}
+}
+
 func TestRuntimeNetworkPolicyDeniesAllEgress(t *testing.T) {
 	manifest, err := findManifest(".", "NetworkPolicy", "gojudge-runtime")
 	if err != nil {
@@ -205,11 +242,36 @@ func TestRuntimeNetworkPolicyDeniesAllEgress(t *testing.T) {
 	}
 
 	spec := mapValue(manifest.Raw["spec"])
-	if !containsString(stringList(spec["policyTypes"]), "Egress") {
-		t.Errorf("expected runtime network policy to include Egress, got %#v", spec["policyTypes"])
+	types := stringList(spec["policyTypes"])
+	if !containsString(types, "Egress") || !containsString(types, "Ingress") {
+		t.Errorf("expected runtime network policy to include Egress and Ingress, got %#v", types)
 	}
 	if len(listValue(spec["egress"])) != 0 {
 		t.Errorf("expected runtime egress to be empty, got %#v", spec["egress"])
+	}
+	selector := mapValue(spec["podSelector"])
+	expressions := listValue(selector["matchExpressions"])
+	if len(expressions) != 1 {
+		t.Fatal("expected a selector for both compiler and runner")
+	}
+	expression := mapValue(expressions[0])
+	if expression["key"] != "app.kubernetes.io/name" || expression["operator"] != "In" ||
+		!slices.Equal(stringList(expression["values"]), []string{"gojudge", "gojudge-compiler"}) {
+		t.Error("network policy must include both compiler and runner")
+	}
+	ingress := listValue(spec["ingress"])
+	if len(ingress) != 1 {
+		t.Fatal("expected one runtime ingress rule")
+	}
+	from := listValue(mapValue(ingress[0])["from"])
+	if len(from) != 1 {
+		t.Fatal("expected ingress only from workers")
+	}
+	peer := mapValue(from[0])
+	labels := mapValue(mapValue(peer["podSelector"])["matchLabels"])
+	if len(peer) != 1 || labels["app.kubernetes.io/name"] != "sandbox-worker" ||
+		labels["app.kubernetes.io/component"] != "worker" {
+		t.Error("runtime ingress must only allow workers in the sandbox namespace")
 	}
 }
 

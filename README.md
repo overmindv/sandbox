@@ -7,7 +7,7 @@
 По умолчанию compose поднимает:
 
 - Kafka: `localhost:29092` с внутренним адресом `kafka:9092`.
-- go-judge: `http://localhost:5050`.
+- go-judge и Go-компилятор: доступны только внутри сети Compose.
 - sandbox-worker: health `http://localhost:8080/healthz`, readiness `http://localhost:8080/readyz`, metrics `http://localhost:9090/metrics`.
 
 Опционально:
@@ -30,6 +30,7 @@ Copy-Item .env.example .env.local
 - `SANDBOX_KAFKA_BROKERS=kafka:9092`
 - `SANDBOX_EXECUTOR_TYPE=gojudge`
 - `SANDBOX_GOJUDGE_BASE_URL=http://gojudge:5050`
+- `SANDBOX_GOJUDGE_COMPILER_URL=http://gojudge-compiler:5050`
 - `SANDBOX_FEATURE_GOJUDGE_EXECUTOR=true`
 - `SANDBOX_FEATURE_FAKE_EXECUTOR=false`
 
@@ -37,6 +38,12 @@ Copy-Item .env.example .env.local
 
 ```powershell
 .\scripts\dev-up.ps1
+```
+
+Для тестов с хоста можно открыть runner и компилятор на loopback:
+
+```powershell
+.\scripts\dev-up.ps1 -WithGoJudgeHost
 ```
 
 С UI:

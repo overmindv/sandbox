@@ -22,6 +22,32 @@ The production path is HTTP `POST /run`. go-judge also has a gRPC endpoint, but 
 
 No shell command is built. `cmd.args` is sent as an array.
 
+## Go Build and Run
+
+Set `SANDBOX_GOJUDGE_COMPILER_URL` to the internal Go compiler endpoint.
+Compose and the Kubernetes manifests configure a separate go-judge for it.
+The worker compiles once per execution request, then runs the binary with the
+original input, CPU, wall, memory, process and output limits for each case.
+Python and the legacy `go test` path do not use the compiler endpoint.
+
+The compiler is offline and uses a per-sandbox cache in tmpfs. Its file limit
+is 32 MiB; the worker accepts a compiled binary of up to 8 MiB. The runner
+receives the binary through go-judge's file API. The worker deletes both copies
+after use. The server expires files after two minutes if cleanup is interrupted.
+Each file ID is used only on the connection that produced it. Connect the
+worker directly to the go-judge service, without a per-request HTTP proxy.
+Use the same architecture for the compiler and runner.
+
+The file API has no client authentication. Compose does not publish it by
+default. To run host-side integration tests, opt in to loopback ports:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.gojudge-host.yml up -d gojudge gojudge-compiler
+```
+
+The runner listens on port 5050 and the compiler on 5051 on the local host.
+Do not expose either port on a shared network.
+
 ## Response Mapping
 
 go-judge returns one result item for the single command. The executor collects:

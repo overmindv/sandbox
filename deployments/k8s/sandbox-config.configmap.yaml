@@ -29,6 +29,7 @@ data:
 
   SANDBOX_EXECUTOR_TYPE: gojudge
   SANDBOX_GOJUDGE_BASE_URL: http://gojudge.sandbox.svc.cluster.local:5050
+  SANDBOX_GOJUDGE_COMPILER_URL: http://gojudge-compiler.sandbox.svc.cluster.local:5050
   SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS: "20000"
 
   SANDBOX_FEATURE_FAKE_EXECUTOR: "false"

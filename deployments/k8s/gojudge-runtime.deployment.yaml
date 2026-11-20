@@ -52,6 +52,7 @@ spec:
       enableServiceLinks: false
       terminationGracePeriodSeconds: 20
       nodeSelector:
+        kubernetes.io/arch: amd64
         overmindv.io/node-pool: sandbox-runtime
       tolerations:
         - key: overmindv.io/sandbox-runtime
@@ -89,7 +90,7 @@ spec:
             - -copy-out-limit
             - "1048576"
             - -file-timeout
-            - 30m
+            - 2m
             - -no-fallback
           ports:
             - name: http

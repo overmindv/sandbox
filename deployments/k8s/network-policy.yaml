@@ -49,8 +49,11 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: gojudge
               app.kubernetes.io/component: sandbox-runtime
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [gojudge, gojudge-compiler]
       ports:
         - protocol: TCP
           port: 5050

@@ -51,7 +51,7 @@ services:
       - sandbox
 
   gojudge:
-    build:
+    build: &gojudge-build
       context: .
       dockerfile: deployments/docker/Dockerfile.gojudge-runtime
       args:
@@ -62,10 +62,46 @@ services:
     restart: unless-stopped
     privileged: true
     shm_size: 256m
-    ports:
-      - "${SANDBOX_GOJUDGE_HOST_PORT:-5050}:5050"
+    command: ["-file-timeout", "2m"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5050/version >/dev/null 2>&1 || curl -fsS http://127.0.0.1:5050/version >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - sandbox
+
+  gojudge-compiler:
+    build: *gojudge-build
+    image: ${SANDBOX_GOJUDGE_LOCAL_IMAGE:-overmindv/sandbox-gojudge:local}
+    restart: unless-stopped
+    privileged: true
+    read_only: true
+    cpus: 4
+    mem_limit: 3g
+    shm_size: 256m
+    tmpfs:
+      - /tmp:size=256m
+      - /w:size=128m
+    command:
+      - -http-addr
+      - 0.0.0.0:5050
+      - -parallelism
+      - "2"
+      - -container-cred-start
+      - "10000"
+      - -tmp-fs-param
+      - size=128m,nr_inodes=4096
+      - -output-limit
+      - "33554432"
+      - -copy-out-limit
+      - "1048576"
+      - -file-timeout
+      - 2m
+      - -no-fallback
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5050/version"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -88,6 +124,8 @@ services:
         condition: service_completed_successfully
       gojudge:
         condition: service_healthy
+      gojudge-compiler:
+        condition: service_healthy
     environment:
       SANDBOX_CONFIG_FILE: configs/local.yaml
       SANDBOX_ENV: local
@@ -108,6 +146,7 @@ services:
       SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS: ${SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS:-5000}
       SANDBOX_EXECUTOR_TYPE: gojudge
       SANDBOX_GOJUDGE_BASE_URL: http://gojudge:5050
+      SANDBOX_GOJUDGE_COMPILER_URL: http://gojudge-compiler:5050
       SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS: ${SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS:-10000}
       SANDBOX_FEATURE_FAKE_EXECUTOR: "false"
       SANDBOX_FEATURE_GOJUDGE_EXECUTOR: "true"

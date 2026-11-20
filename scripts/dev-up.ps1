@@ -2,6 +2,7 @@ param(
     [switch]$WithUI,
     [switch]$WithPrometheus,
     [switch]$WithObjectStorage,
+    [switch]$WithGoJudgeHost,
     [switch]$NoBuild
 )
 
@@ -15,6 +16,9 @@ Push-Location $repoRoot
 try {
     Import-SandboxEnvFile -Root $repoRoot | Out-Null
     $composeArgs = @(Get-SandboxComposeArgs -Root $repoRoot)
+    if ($WithGoJudgeHost) {
+        $composeArgs += @("-f", "docker-compose.yml", "-f", "docker-compose.gojudge-host.yml")
+    }
     if ($WithUI) {
         $composeArgs += @("--profile", "ui")
     }
@@ -36,13 +40,17 @@ try {
     }
 
     $workerPort = Get-SandboxEnvOrDefault "SANDBOX_WORKER_HEALTH_PORT" "8080"
-    $goJudgePort = Get-SandboxEnvOrDefault "SANDBOX_GOJUDGE_HOST_PORT" "5050"
 
     Write-Host ""
     Write-Host "Sandbox local stack is starting."
     Write-Host "Worker health:   http://localhost:$workerPort/healthz"
     Write-Host "Worker readiness:http://localhost:$workerPort/readyz"
-    Write-Host "go-judge:        http://localhost:$goJudgePort/version"
+    if ($WithGoJudgeHost) {
+        $goJudgePort = Get-SandboxEnvOrDefault "SANDBOX_GOJUDGE_HOST_PORT" "5050"
+        $compilerPort = Get-SandboxEnvOrDefault "SANDBOX_GOJUDGE_COMPILER_HOST_PORT" "5051"
+        Write-Host "go-judge:        http://127.0.0.1:$goJudgePort/version"
+        Write-Host "Go compiler:     http://127.0.0.1:$compilerPort/version"
+    }
     if ($WithUI) {
         $uiPort = Get-SandboxEnvOrDefault "SANDBOX_REDPANDA_CONSOLE_PORT" "8088"
         Write-Host "Kafka UI:        http://localhost:$uiPort"

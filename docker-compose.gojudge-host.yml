@@ -1,0 +1,7 @@
+services:
+  gojudge:
+    ports:
+      - "127.0.0.1:${SANDBOX_GOJUDGE_HOST_PORT:-5050}:5050"
+  gojudge-compiler:
+    ports:
+      - "127.0.0.1:${SANDBOX_GOJUDGE_COMPILER_HOST_PORT:-5051}:5050"
