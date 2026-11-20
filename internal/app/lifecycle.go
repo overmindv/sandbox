@@ -12,6 +12,7 @@ import (
 var ErrWorkerAlreadyStarted = errors.New("worker already started")
 
 const processorErrorBackoff = 250 * time.Millisecond
+const kafkaExecutionWindow = 1
 
 func (w *Worker) Start(ctx context.Context) error {
 	if w == nil {
@@ -76,6 +77,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) runProcessorLoop(ctx, intakeCtx context.Context) {
+	// Finish and commit one message before fetching the next.
 	for intakeCtx.Err() == nil {
 		if err := w.processor.ProcessOnceWithIntake(ctx, intakeCtx); err != nil {
 			if intakeCtx.Err() != nil {

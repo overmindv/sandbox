@@ -5,6 +5,7 @@ package app_test
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -53,8 +54,10 @@ func TestKafkaWorkerDrainKeepsRuntimeRelease(t *testing.T) {
 		Requests: id + ".requests", Retry: id + ".retry", Events: id + ".events",
 		Results: id + ".results", DeadLetter: id + ".deadletter",
 	}
-	cfg.Scheduler.MaxInFlight = 1
-	cfg.Scheduler.MaxInFlightPerLanguage = map[string]int{"python": 1}
+	cfg.Scheduler.MaxInFlight = 16
+	cfg.Scheduler.MaxInFlightPerLanguage = map[string]int{"python": 16}
+	cfg.Observability.MetricsEnabled = true
+	cfg.Server.MetricsAddr = "127.0.0.1:0"
 	cfg.Storage.Type, cfg.Storage.Postgres.DSN = "postgres", dsn
 	createDrainTopics(t, ctx, broker, cfg.Kafka.Topics)
 
@@ -94,6 +97,7 @@ func TestKafkaWorkerDrainKeepsRuntimeRelease(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("first job did not reach its runtime", ctx.Err())
 	}
+	assertSaturatedWorker(t, ctx, worker.MetricsAddr())
 	stop()
 	waitNotReady(t, worker)
 	if err := waitDrainResult(t, done); err != nil {
@@ -125,6 +129,32 @@ func TestKafkaWorkerDrainKeepsRuntimeRelease(t *testing.T) {
 		}
 		result := readDrainResult(t, ctx, output, attempt)
 		assertVersionResult(t, result, cfg.App.WorkerID, "3.12.16")
+	}
+}
+
+func assertSaturatedWorker(t *testing.T, ctx context.Context, addr string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatal("read saturation metrics", resp.StatusCode, err)
+	}
+	for _, line := range []string{
+		"sandbox_scheduler_slots_capacity 16\n",
+		"sandbox_scheduler_execution_capacity 1\n",
+		"sandbox_scheduler_slots_utilization_percent 100\n",
+	} {
+		if !strings.Contains(string(body), line) {
+			t.Error("missing saturation sample", strings.TrimSpace(line))
+		}
 	}
 }
 

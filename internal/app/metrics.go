@@ -94,6 +94,15 @@ func (s *MetricsServer) Shutdown(ctx context.Context) error {
 	return err
 }
 
+func (s *MetricsServer) Addr() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
+
 func (s *MetricsServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -119,8 +128,11 @@ func (s *MetricsServer) render() string {
 	writeGaugeMap(&b, "sandbox_scheduler_in_flight_by_language", "language", slots.ByLanguage)
 	writeHelp(&b, "sandbox_scheduler_slots_capacity", "gauge", "Configured execution slots per worker.")
 	writeGauge(&b, "sandbox_scheduler_slots_capacity", slots.MaxGlobal)
-	writeHelp(&b, "sandbox_scheduler_slots_utilization_percent", "gauge", "Highest current utilization of the global or per-language slot pools.")
-	writeGauge(&b, "sandbox_scheduler_slots_utilization_percent", slotUtilization(slots))
+	capacity := min(kafkaExecutionWindow, slots.MaxGlobal)
+	writeHelp(&b, "sandbox_scheduler_execution_capacity", "gauge", "Execution slots available through the Kafka intake loop.")
+	writeGauge(&b, "sandbox_scheduler_execution_capacity", capacity)
+	writeHelp(&b, "sandbox_scheduler_slots_utilization_percent", "gauge", "Current utilization of the effective execution capacity.")
+	writeGauge(&b, "sandbox_scheduler_slots_utilization_percent", slotUtilization(slots, capacity))
 	writeHelp(&b, "sandbox_scheduler_jobs_submitted_total", "counter", "Total submitted jobs by language.")
 	writeCounterMap(&b, "sandbox_scheduler_jobs_submitted_total", "language", snapshot.Submitted)
 	writeHelp(&b, "sandbox_scheduler_jobs_rejected_total", "counter", "Total rejected jobs by reason.")
@@ -166,11 +178,11 @@ func (s *MetricsServer) render() string {
 	return b.String()
 }
 
-func slotUtilization(slots scheduler.SlotStats) int {
-	if slots.MaxGlobal <= 0 {
+func slotUtilization(slots scheduler.SlotStats, capacity int) int {
+	if capacity <= 0 {
 		return 0
 	}
-	percent := slots.InFlight * 100 / slots.MaxGlobal
+	percent := slots.InFlight * 100 / capacity
 	for language, capacity := range slots.MaxPerLanguage {
 		if capacity > 0 {
 			percent = max(percent, slots.ByLanguage[language]*100/capacity)

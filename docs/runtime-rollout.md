@@ -25,9 +25,12 @@ the development runtime Deployments as part of this rollout.
 
 Expose `sandbox_scheduler_slots_utilization_percent` through Prometheus
 Adapter as a per-Pod custom metric. It reports the highest live utilization
-of the global or per-language slots. The HPA target is 80 percent; CPU stays
+of the effective global or per-language slots. Kafka intake currently
+processes one message at a time, even if the slot pool is configured higher.
+The HPA target is 80 percent; CPU stays
 as the other signal. Check `sandbox_scheduler_queue_depth`,
-`sandbox_scheduler_queue_capacity` and `sandbox_scheduler_slots_capacity`
+`sandbox_scheduler_queue_capacity`, `sandbox_scheduler_slots_capacity` and
+`sandbox_scheduler_execution_capacity`
 before adjusting the worker limits. Add the rule from
 [`prometheus-adapter-values.yaml`](../deployments/k8s/examples/prometheus-adapter-values.yaml)
 to the existing adapter config. Check that the metric appears in the custom

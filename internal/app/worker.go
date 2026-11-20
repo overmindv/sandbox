@@ -61,6 +61,13 @@ func (w *Worker) HealthAddr() string {
 	return w.healthServer.Addr()
 }
 
+func (w *Worker) MetricsAddr() string {
+	if w == nil || w.metricsServer == nil {
+		return ""
+	}
+	return w.metricsServer.Addr()
+}
+
 func (w *Worker) ProcessOnce(ctx context.Context) error {
 	if w == nil || w.processor == nil {
 		return kafka.ErrNoRunRequestHandler

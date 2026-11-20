@@ -37,6 +37,7 @@ func TestMetricsServerRendersObservabilityMetrics(t *testing.T) {
 
 	for _, expected := range []string{
 		fmt.Sprintf("sandbox_scheduler_slots_capacity %d", cfg.MaxInFlight),
+		"sandbox_scheduler_execution_capacity 1",
 		"sandbox_scheduler_slots_utilization_percent 0",
 		`sandbox_kafka_messages_consumed_total{topic="code-execution.requests.v1"} 1`,
 		`sandbox_kafka_messages_produced_total{topic="code-execution.results.v1"} 1`,
@@ -56,11 +57,18 @@ func TestMetricsServerRendersObservabilityMetrics(t *testing.T) {
 func TestSlotUtilizationTracksLanguageSaturation(t *testing.T) {
 	stats := scheduler.SlotStats{MaxGlobal: 16, InFlight: 2,
 		MaxPerLanguage: map[string]int{"go": 2}, ByLanguage: map[string]int{"go": 2}}
-	if got := slotUtilization(stats); got != 100 {
+	if got := slotUtilization(stats, stats.MaxGlobal); got != 100 {
 		t.Error("saturated Go pool is not visible to the HPA", got)
 	}
 	stats.InFlight, stats.ByLanguage["go"] = 0, 0
-	if got := slotUtilization(stats); got != 0 {
+	if got := slotUtilization(stats, stats.MaxGlobal); got != 0 {
 		t.Error("metric did not reset after execution", got)
+	}
+}
+
+func TestSlotUtilizationUsesKafkaExecutionWindow(t *testing.T) {
+	stats := scheduler.SlotStats{MaxGlobal: 16, InFlight: 1}
+	if got := slotUtilization(stats, kafkaExecutionWindow); got != 100 {
+		t.Error("one running Kafka job fills the intake window", got)
 	}
 }

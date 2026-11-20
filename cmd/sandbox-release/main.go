@@ -34,12 +34,12 @@ func run(manifest, phase string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	head, err := exec.Command("git", "rev-parse", "--verify", "HEAD").Output()
+	head, err := exec.Command("git", "--no-replace-objects", "rev-parse", "--verify", "HEAD").Output()
 	if err != nil || strings.TrimSpace(string(head)) != release.source {
 		return fmt.Errorf("check out Sandbox at %s before rendering", release.source)
 	}
 	files := func(path string) ([]byte, error) {
-		data, err := exec.Command("git", "show", release.source+":"+path).Output()
+		data, err := exec.Command("git", "--no-replace-objects", "show", release.source+":"+path).Output()
 		if err != nil {
 			return nil, fmt.Errorf("read %s from Sandbox commit: %w", path, err)
 		}
