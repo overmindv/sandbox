@@ -6,6 +6,19 @@
 - Readiness: `GET /readyz`
 - Metrics: `GET /metrics`
 
+## Worker Shutdown
+
+On SIGTERM, the worker reports not ready and stops taking requests from Kafka.
+It finishes the message it already admitted, including result publication and
+offset commit, within `SANDBOX_SHUTDOWN_TIMEOUT_MS`. The Kubernetes worker has
+30 seconds inside a 35-second termination grace period. Keep the outer grace
+period longer than the worker timeout when overriding either value.
+
+At the deadline, the worker cancels processing and exits with an error. An
+uncommitted message can be delivered again. With PostgreSQL, the next owner
+replays a stored result or reports `execution_interrupted` for an unfinished
+attempt; it does not execute the same attempt again.
+
 ## Logs
 
 The worker writes structured logs through `slog`. Use JSON in shared environments and console output locally:

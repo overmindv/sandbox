@@ -699,6 +699,41 @@ func TestProcessorRetainsPendingUntilCommit(t *testing.T) {
 	}
 }
 
+type cancelOnFetchConsumer struct {
+	fakeConsumer
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnFetchConsumer) FetchMessage(ctx context.Context) (Message, error) {
+	msg, err := c.fakeConsumer.FetchMessage(ctx)
+	c.cancel()
+	return msg, err
+}
+
+func TestProcessorDoesNotAdmitMessageWhenIntakeIsCanceled(t *testing.T) {
+	req := validKafkaRunRequest()
+	payload, err := EncodeRunRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	consumer := &cancelOnFetchConsumer{
+		fakeConsumer: fakeConsumer{messages: []Message{{Topic: testTopics().Requests, Key: []byte(req.SubmissionID), Value: payload}}},
+		cancel:       cancel,
+	}
+	producer := &fakeProducer{}
+	called := false
+	processor := testProcessor(t, consumer, producer, RunRequestHandlerFunc(func(context.Context, Message, contracts.RunRequest) error {
+		called = true
+		return nil
+	}))
+	err = processor.ProcessOnceWithIntake(t.Context(), ctx)
+	if !errors.Is(err, context.Canceled) || called || len(consumer.committed) != 0 || len(producer.messages) != 0 {
+		t.Error("canceled intake admitted a message", err)
+	}
+}
+
 func TestProcessorRejectsCommitBeforePublish(t *testing.T) {
 	c := &fakeConsumer{messages: []Message{{Offset: 1}}}
 	p := testProcessor(t, c, &fakeProducer{}, nil)

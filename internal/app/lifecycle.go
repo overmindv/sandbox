@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"overmindv/sandbox/internal/storage"
@@ -47,30 +48,46 @@ func (w *Worker) Start(ctx context.Context) error {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	if err := w.Start(ctx); err != nil {
+	// Stop intake immediately without canceling the message already being processed.
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWork()
+	if err := w.Start(workCtx); err != nil {
 		return err
 	}
 
-	processorErr := w.runProcessorLoop(ctx)
+	shutdown := make(chan context.Context, 1)
+	stopped := make(chan error, 1)
+	go func() {
+		w.runProcessorLoop(workCtx, ctx)
+		stopped <- w.Shutdown(<-shutdown)
+	}()
+
+	<-ctx.Done()
+	w.healthState.SetReady(false)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout())
 	defer cancel()
-	shutdownErr := w.Shutdown(shutdownCtx)
-	return errors.Join(processorErr, shutdownErr)
+	shutdown <- shutdownCtx
+	select {
+	case <-shutdownCtx.Done():
+		return fmt.Errorf("worker shutdown: %w", shutdownCtx.Err())
+	case err := <-stopped:
+		return err
+	}
 }
 
-func (w *Worker) runProcessorLoop(ctx context.Context) error {
-	for {
-		if err := w.ProcessOnce(ctx); err != nil {
-			if ctx.Err() != nil {
-				return nil
+func (w *Worker) runProcessorLoop(ctx, intakeCtx context.Context) {
+	for intakeCtx.Err() == nil {
+		if err := w.processor.ProcessOnceWithIntake(ctx, intakeCtx); err != nil {
+			if intakeCtx.Err() != nil {
+				return
 			}
 
 			w.logger.Error(ctx, "kafka message processing failed", "error", err)
 			timer := time.NewTimer(processorErrorBackoff)
 			select {
-			case <-ctx.Done():
+			case <-intakeCtx.Done():
 				timer.Stop()
-				return nil
+				return
 			case <-timer.C:
 			}
 		}
@@ -83,40 +100,28 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	}
 	w.healthState.SetReady(false)
 	w.logger.Info(ctx, "worker shutting down", "worker_id", w.cfg.App.WorkerID)
+	var err error
 	if w.dispatcher != nil {
-		if err := w.dispatcher.Stop(ctx); err != nil {
-			return err
-		}
+		err = errors.Join(err, w.dispatcher.Stop(ctx))
 	}
 	if w.processor != nil {
-		if err := w.processor.Close(); err != nil {
-			return err
-		}
+		err = errors.Join(err, w.processor.Close())
 	}
 	if w.runStore != nil {
 		now := time.Now().UTC()
-		if err := w.runStore.UpsertWorkerInstance(ctx, storage.WorkerInstanceRecord{
+		err = errors.Join(err, w.runStore.UpsertWorkerInstance(ctx, storage.WorkerInstanceRecord{
 			WorkerInstanceID: w.cfg.App.WorkerID,
 			Status:           storage.WorkerStatusStopped,
 			LastSeenAt:       now,
 			StoppedAt:        &now,
 			UpdatedAt:        now,
-		}); err != nil {
-			return err
-		}
-		if err := w.runStore.Close(); err != nil {
-			return err
-		}
+		}), w.runStore.Close())
 	}
 	if w.metricsServer != nil {
-		if err := w.metricsServer.Shutdown(ctx); err != nil {
-			return err
-		}
+		err = errors.Join(err, w.metricsServer.Shutdown(ctx))
 	}
-	if err := w.healthServer.Shutdown(ctx); err != nil {
-		return err
-	}
+	err = errors.Join(err, w.healthServer.Shutdown(ctx))
 	w.started.Store(false)
 	w.logger.Info(ctx, "worker stopped", "worker_id", w.cfg.App.WorkerID)
-	return nil
+	return err
 }

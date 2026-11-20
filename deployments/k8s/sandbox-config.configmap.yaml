@@ -10,6 +10,7 @@ metadata:
 data:
   SANDBOX_CONFIG_FILE: configs/dev.yaml
   SANDBOX_ENV: dev
+  SANDBOX_SHUTDOWN_TIMEOUT_MS: "30000"
 
   SANDBOX_KAFKA_BROKERS: sandbox-kafka-bootstrap.kafka.svc.cluster.local:9092
   SANDBOX_KAFKA_CLIENT_ID: sandbox-worker-k8s

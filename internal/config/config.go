@@ -436,6 +436,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_WORKER_ID"); value != "" {
 		cfg.App.WorkerID = value
 	}
+	if err := applyIntEnv("SANDBOX_SHUTDOWN_TIMEOUT_MS", &cfg.App.ShutdownTimeoutMS); err != nil {
+		return err
+	}
 	if value := os.Getenv("SANDBOX_KAFKA_BROKERS"); value != "" {
 		cfg.Kafka.Brokers = splitCSV(value)
 	}

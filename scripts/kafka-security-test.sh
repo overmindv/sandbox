@@ -114,5 +114,5 @@ for mode in mtls scram; do
 done
 admin kafka-topics --create --topic bench.v1 --partitions 1 --replication-factor 1 >/dev/null
 
-go test -tags=integration ./internal/app -run '^TestKafkaSecurity' -count=1 -v
+go test -race -tags=integration ./internal/app -run '^TestKafka(Security|WorkerDrain)' -count=1 -v
 go test -tags=integration ./internal/app -run '^$' -bench '^BenchmarkKafkaPublishSecurity$' -benchmem -benchtime=300x

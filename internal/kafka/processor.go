@@ -94,6 +94,14 @@ func NewProcessor(consumer Consumer, producer Producer, topics TopicNames, worke
 }
 
 func (p *Processor) ProcessOnce(ctx context.Context) error {
+	return p.ProcessOnceWithIntake(ctx, ctx)
+}
+
+// ProcessOnceWithIntake uses intakeCtx for admission and ctx for processing and commit.
+func (p *Processor) ProcessOnceWithIntake(ctx, intakeCtx context.Context) error {
+	if err := intakeCtx.Err(); err != nil {
+		return err
+	}
 	if !p.CommitPolicy.CommitAfterResultPublish {
 		return ErrCommitBeforeHandling
 	}
@@ -111,10 +119,14 @@ func (p *Processor) ProcessOnce(ctx context.Context) error {
 	if p.pending != nil {
 		msg = *p.pending
 	} else {
-		msg, err = p.Consumer.FetchMessage(ctx)
+		msg, err = p.Consumer.FetchMessage(intakeCtx)
 		if err == nil {
 			p.pending = &msg
 		}
+	}
+	if intakeErr := intakeCtx.Err(); intakeErr != nil {
+		endConsume(intakeErr)
+		return intakeErr
 	}
 	if err != nil {
 		endConsume(err)

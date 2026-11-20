@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -141,6 +142,23 @@ func TestRuntimeDeploymentHardeningBaseline(t *testing.T) {
 	volumes := listValue(podSpec["volumes"])
 	if !hasMemoryEmptyDir(volumes, "tmp") || !hasMemoryEmptyDir(volumes, "work") || !hasMemoryEmptyDir(volumes, "shm") {
 		t.Errorf("expected tmp/work/shm memory emptyDir volumes, got %#v", volumes)
+	}
+}
+
+func TestWorkerShutdownFitsTerminationGracePeriod(t *testing.T) {
+	deployment, err := findManifest(".", "Deployment", "sandbox-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := findManifest(".", "ConfigMap", "sandbox-worker-config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grace, _ := podSpecFromDeployment(deployment)["terminationGracePeriodSeconds"].(int)
+	value, _ := mapValue(cfg.Raw["data"])["SANDBOX_SHUTDOWN_TIMEOUT_MS"].(string)
+	timeout, err := strconv.Atoi(value)
+	if err != nil || timeout <= 0 || timeout >= grace*1000 {
+		t.Errorf("shutdown timeout %q must fit inside %ds termination grace period", value, grace)
 	}
 }
 
