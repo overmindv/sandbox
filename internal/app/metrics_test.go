@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,8 @@ func TestMetricsServerRendersObservabilityMetrics(t *testing.T) {
 	rendered := server.render()
 
 	for _, expected := range []string{
+		fmt.Sprintf("sandbox_scheduler_slots_capacity %d", cfg.MaxInFlight),
+		"sandbox_scheduler_slots_utilization_percent 0",
 		`sandbox_kafka_messages_consumed_total{topic="code-execution.requests.v1"} 1`,
 		`sandbox_kafka_messages_produced_total{topic="code-execution.results.v1"} 1`,
 		`sandbox_kafka_message_failures_total{reason="produce_failed"} 1`,
@@ -47,5 +50,17 @@ func TestMetricsServerRendersObservabilityMetrics(t *testing.T) {
 		if !strings.Contains(rendered, expected) {
 			t.Errorf("expected rendered metrics to contain %q, got:\n%s", expected, rendered)
 		}
+	}
+}
+
+func TestSlotUtilizationTracksLanguageSaturation(t *testing.T) {
+	stats := scheduler.SlotStats{MaxGlobal: 16, InFlight: 2,
+		MaxPerLanguage: map[string]int{"go": 2}, ByLanguage: map[string]int{"go": 2}}
+	if got := slotUtilization(stats); got != 100 {
+		t.Error("saturated Go pool is not visible to the HPA", got)
+	}
+	stats.InFlight, stats.ByLanguage["go"] = 0, 0
+	if got := slotUtilization(stats); got != 0 {
+		t.Error("metric did not reset after execution", got)
 	}
 }

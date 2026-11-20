@@ -21,17 +21,14 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
-    # Requires Prometheus Adapter to expose sandbox_kafka_queue_lag_ms_max as a pod custom metric.
+    # Requires Prometheus Adapter to expose scheduler slot utilization as a pod metric.
     - type: Pods
       pods:
         metric:
-          name: sandbox_kafka_queue_lag_ms_max
-          selector:
-            matchLabels:
-              topic: code-execution.requests.v1
+          name: sandbox_scheduler_slots_utilization_percent
         target:
           type: AverageValue
-          averageValue: "30000"
+          averageValue: "80"
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60

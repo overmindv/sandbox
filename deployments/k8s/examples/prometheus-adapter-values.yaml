@@ -1,0 +1,11 @@
+rules:
+  custom:
+    - seriesQuery: 'sandbox_scheduler_slots_utilization_percent{namespace="sandbox",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      name:
+        matches: '^sandbox_scheduler_slots_utilization_percent$'
+        as: sandbox_scheduler_slots_utilization_percent
+      metricsQuery: 'max(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'

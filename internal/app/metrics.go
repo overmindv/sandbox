@@ -102,8 +102,10 @@ func (s *MetricsServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *MetricsServer) render() string {
 	var snapshot observability.SchedulerMetricsSnapshot
+	var slots scheduler.SlotStats
 	if s.dispatcher != nil {
 		snapshot = s.dispatcher.Metrics()
+		slots = s.dispatcher.Stats()
 	}
 
 	var b strings.Builder
@@ -112,9 +114,13 @@ func (s *MetricsServer) render() string {
 	writeHelp(&b, "sandbox_scheduler_queue_capacity", "gauge", "Configured scheduler queue capacity.")
 	writeGauge(&b, "sandbox_scheduler_queue_capacity", snapshot.QueueCapacity)
 	writeHelp(&b, "sandbox_scheduler_in_flight", "gauge", "Current number of in-flight jobs.")
-	writeGauge(&b, "sandbox_scheduler_in_flight", snapshot.InFlight)
+	writeGauge(&b, "sandbox_scheduler_in_flight", slots.InFlight)
 	writeHelp(&b, "sandbox_scheduler_in_flight_by_language", "gauge", "Current in-flight jobs by language.")
-	writeGaugeMap(&b, "sandbox_scheduler_in_flight_by_language", "language", snapshot.InFlightByLanguage)
+	writeGaugeMap(&b, "sandbox_scheduler_in_flight_by_language", "language", slots.ByLanguage)
+	writeHelp(&b, "sandbox_scheduler_slots_capacity", "gauge", "Configured execution slots per worker.")
+	writeGauge(&b, "sandbox_scheduler_slots_capacity", slots.MaxGlobal)
+	writeHelp(&b, "sandbox_scheduler_slots_utilization_percent", "gauge", "Highest current utilization of the global or per-language slot pools.")
+	writeGauge(&b, "sandbox_scheduler_slots_utilization_percent", slotUtilization(slots))
 	writeHelp(&b, "sandbox_scheduler_jobs_submitted_total", "counter", "Total submitted jobs by language.")
 	writeCounterMap(&b, "sandbox_scheduler_jobs_submitted_total", "language", snapshot.Submitted)
 	writeHelp(&b, "sandbox_scheduler_jobs_rejected_total", "counter", "Total rejected jobs by reason.")
@@ -158,6 +164,19 @@ func (s *MetricsServer) render() string {
 	writeHelp(&b, "sandbox_artifact_store_failures_total", "counter", "Total artifact storage failures by reason.")
 	writeCounterMap(&b, "sandbox_artifact_store_failures_total", "reason", snapshot.ArtifactFailures)
 	return b.String()
+}
+
+func slotUtilization(slots scheduler.SlotStats) int {
+	if slots.MaxGlobal <= 0 {
+		return 0
+	}
+	percent := slots.InFlight * 100 / slots.MaxGlobal
+	for language, capacity := range slots.MaxPerLanguage {
+		if capacity > 0 {
+			percent = max(percent, slots.ByLanguage[language]*100/capacity)
+		}
+	}
+	return percent
 }
 
 func writeHelp(b *strings.Builder, name, metricType, help string) {
