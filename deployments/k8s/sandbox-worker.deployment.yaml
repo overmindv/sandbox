@@ -110,7 +110,15 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: kafka-client
+              mountPath: /run/secrets/sandbox-kafka
+              readOnly: true
       volumes:
+        - name: kafka-client
+          secret:
+            secretName: sandbox-kafka-client
+            defaultMode: 0440
+            optional: true
         - name: tmp
           emptyDir:
             medium: Memory

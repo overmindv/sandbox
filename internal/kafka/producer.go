@@ -16,11 +16,12 @@ type Producer interface {
 }
 
 type KafkaProducer struct {
-	writer *kafkago.Writer
+	writer    *kafkago.Writer
+	transport *kafkago.Transport
 }
 
-func NewProducer(cfg config.KafkaConfig) *KafkaProducer {
-	return &KafkaProducer{
+func newProducer(cfg config.KafkaConfig, security connectionSecurity) *KafkaProducer {
+	producer := &KafkaProducer{
 		writer: &kafkago.Writer{
 			Addr:         kafkago.TCP(cfg.Brokers...),
 			Balancer:     &kafkago.Hash{},
@@ -31,6 +32,11 @@ func NewProducer(cfg config.KafkaConfig) *KafkaProducer {
 			WriteTimeout: time.Duration(cfg.Producer.RequestTimeoutMS) * time.Millisecond,
 		},
 	}
+	if security.tls != nil {
+		producer.transport = &kafkago.Transport{ClientID: cfg.ClientID, TLS: security.tls, SASL: security.sasl}
+		producer.writer.Transport = producer.transport
+	}
+	return producer
 }
 
 func (p *KafkaProducer) WriteMessages(ctx context.Context, messages ...Message) error {
@@ -42,6 +48,9 @@ func (p *KafkaProducer) WriteMessages(ctx context.Context, messages ...Message) 
 }
 
 func (p *KafkaProducer) Close() error {
+	if p.transport != nil {
+		defer p.transport.CloseIdleConnections()
+	}
 	return p.writer.Close()
 }
 

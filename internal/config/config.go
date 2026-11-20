@@ -71,6 +71,7 @@ type KafkaConfig struct {
 	Consumer KafkaConsumerConfig `yaml:"consumer"`
 	Producer KafkaProducerConfig `yaml:"producer"`
 	Retry    KafkaRetryConfig    `yaml:"retry"`
+	Security KafkaSecurityConfig `yaml:"security"`
 }
 
 type KafkaTopics struct {
@@ -428,6 +429,7 @@ func expandEnvDefaults(input string) string {
 }
 
 func applyEnvOverrides(cfg *Config) error {
+	cfg.Kafka.Security.applyEnv()
 	if value := os.Getenv("SANDBOX_ENV"); value != "" {
 		cfg.App.Environment = value
 	}
@@ -672,6 +674,9 @@ func (cfg Config) Validate() error {
 		if strings.TrimSpace(broker) == "" {
 			errs = append(errs, "kafka.brokers must not contain empty entries")
 		}
+	}
+	if err := cfg.Kafka.Security.validateEnvironment(cfg.App.Environment); err != nil {
+		errs = append(errs, err.Error())
 	}
 	if cfg.Scheduler.MaxInFlight <= 0 {
 		errs = append(errs, "scheduler.max_in_flight must be positive")

@@ -59,6 +59,8 @@ Kafka defaults are aligned with `../infra`:
 
 `code-execution.retry.v1`, `code-execution.events.v1`, and `code-execution.deadletter.v1` are sandbox-side extensions. They must be provisioned before retry/event/DLQ publishing is enabled in a shared environment.
 
+Production requires TLS with mTLS or SCRAM credentials. See [Kafka security](kafka-security.md).
+
 Initial environment variables:
 
 | Env | Config field |

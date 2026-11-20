@@ -71,16 +71,25 @@ type requestPipeline struct {
 
 func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDeps) (*kafka.Processor, *scheduler.Dispatcher, storage.RunStore, error) {
 	hasKafkaDeps := deps.Consumer != nil || deps.Producer != nil
+	ownsKafkaClients := false
+	pipelineReady := false
 	if !hasKafkaDeps {
-		consumer, err := kafka.NewConsumer(cfg.Kafka)
+		consumer, producer, err := kafka.NewClients(cfg.Kafka)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("create kafka consumer: %w", err)
+			return nil, nil, nil, fmt.Errorf("create kafka clients: %w", err)
 		}
 		deps.Consumer = consumer
-		deps.Producer = kafka.NewProducer(cfg.Kafka)
+		deps.Producer = producer
+		ownsKafkaClients = true
 	} else if deps.Consumer == nil || deps.Producer == nil {
 		return nil, nil, nil, errors.New("both kafka consumer and producer are required when pipeline is enabled")
 	}
+	defer func() {
+		if ownsKafkaClients && !pipelineReady {
+			_ = deps.Consumer.Close()
+			_ = deps.Producer.Close()
+		}
+	}()
 
 	executor := deps.Executor
 	if executor == nil {
@@ -174,6 +183,7 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 	processor.Metrics = metrics
 	processor.Tracer = tracer
 	processor.Audit = audit
+	pipelineReady = true
 
 	return processor, dispatcher, runStore, nil
 }

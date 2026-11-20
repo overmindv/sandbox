@@ -30,7 +30,7 @@ type KafkaConsumer struct {
 	reader *kafkago.Reader
 }
 
-func NewConsumer(cfg config.KafkaConfig) (*KafkaConsumer, error) {
+func newConsumer(cfg config.KafkaConfig, security connectionSecurity) (*KafkaConsumer, error) {
 	startOffset := kafkago.FirstOffset
 	if cfg.Consumer.AutoOffsetReset == "latest" {
 		startOffset = kafkago.LastOffset
@@ -58,6 +58,13 @@ func NewConsumer(cfg config.KafkaConfig) (*KafkaConsumer, error) {
 		HeartbeatInterval: time.Duration(cfg.Consumer.HeartbeatIntervalMS) * time.Millisecond,
 		CommitInterval:    0,
 		StartOffset:       startOffset,
+	}
+	if security.tls != nil {
+		dialer := *kafkago.DefaultDialer
+		dialer.ClientID = cfg.ClientID
+		dialer.TLS = security.tls
+		dialer.SASLMechanism = security.sasl
+		readerConfig.Dialer = &dialer
 	}
 	if err := readerConfig.Validate(); err != nil {
 		return nil, err
