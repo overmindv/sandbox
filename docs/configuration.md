@@ -82,6 +82,9 @@ Initial environment variables:
 | `SANDBOX_KAFKA_RETRY_EARLY_SLEEP_CAP_MS` | `kafka.retry.early_retry_sleep_cap_ms` |
 | `SANDBOX_EXECUTOR_TYPE` | `executor.type` |
 | `SANDBOX_GOJUDGE_BASE_URL` | `executor.gojudge.base_url` |
+| `SANDBOX_GOJUDGE_TLS_CA_FILE` | `executor.gojudge.tls.ca_file` |
+| `SANDBOX_GOJUDGE_TLS_CERT_FILE` | `executor.gojudge.tls.cert_file` |
+| `SANDBOX_GOJUDGE_TLS_KEY_FILE` | `executor.gojudge.tls.key_file` |
 | `SANDBOX_MAX_IN_FLIGHT` | `scheduler.max_in_flight` |
 | `SANDBOX_PYTHON_MAX_IN_FLIGHT` | `scheduler.max_in_flight_per_language.python` |
 | `SANDBOX_SCHEDULER_JOB_TIMEOUT_MS` | `scheduler.job_timeout_ms` |
