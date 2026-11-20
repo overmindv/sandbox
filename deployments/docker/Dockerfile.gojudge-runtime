@@ -2,6 +2,16 @@ ARG GOJUDGE_IMAGE=criyle/go-judge:latest
 ARG GO_RUNTIME_VERSION=1.26
 
 FROM golang:${GO_RUNTIME_VERSION}-alpine AS go-runtime
+FROM go-runtime AS go-test-tools
+
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/sandbox-go-test-compile/ ./cmd/sandbox-go-test-compile/
+COPY internal/gotestjob/ ./internal/gotestjob/
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off
+RUN --network=none go build -trimpath -ldflags='-s -w' -o /out/sandbox-go-test-compile ./cmd/sandbox-go-test-compile && \
+	go build -trimpath -ldflags='-s -w' -o /out/sandbox-go-test2json cmd/test2json
+
 FROM ${GOJUDGE_IMAGE}
 
 ARG GO_RUNTIME_VERSION=1.26
@@ -9,6 +19,7 @@ ARG GO_RUNTIME_VERSION=1.26
 USER root
 
 COPY --from=go-runtime /usr/local/go /usr/local/go
+COPY --from=go-test-tools /out/ /usr/local/bin/
 
 RUN set -eux; \
 	if command -v apt-get >/dev/null 2>&1; then \
