@@ -2,7 +2,24 @@
 
 Sandbox uses the go-judge REST API as the first real executor integration.
 
-The production path is HTTP `POST /run`. go-judge also has a gRPC endpoint, but it is disabled by default on the go-judge side, so this repository keeps transport-neutral request/response models and implements the default REST transport first.
+The worker calls `POST /run` to execute jobs and `GET /version` for health. In the
+pilot, both requests go through the runner's private mTLS proxy.
+
+## Runner TLS
+
+Set `SANDBOX_GOJUDGE_BASE_URL` to the private HTTPS address. Mount three PEM files
+read-only in the worker and set their paths:
+
+- `SANDBOX_GOJUDGE_TLS_CA_FILE`: CA bundle for the runner server.
+- `SANDBOX_GOJUDGE_TLS_CERT_FILE`: worker certificate and any intermediates.
+- `SANDBOX_GOJUDGE_TLS_KEY_FILE`: worker private key, readable only by the worker.
+
+Set all three paths or none. With these files configured, both the execution
+and compiler clients verify the server name for their own URL with the
+configured CA bundle and present the worker certificate.
+It refuses plain HTTP and does not follow redirects. Files are loaded at startup;
+restart the worker after replacing them. Never mount the worker key into go-judge
+or pass it to a user program. Local HTTP still works with no TLS files.
 
 ## Request Mapping
 

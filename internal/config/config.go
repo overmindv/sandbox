@@ -140,10 +140,29 @@ type FakeExecutor struct {
 }
 
 type GoJudgeClient struct {
-	BaseURL            string `yaml:"base_url"`
-	CompilerURL        string `yaml:"compiler_url"`
-	RequestTimeoutMS   int    `yaml:"request_timeout_ms"`
-	MaxIdleConnections int    `yaml:"max_idle_connections"`
+	BaseURL            string     `yaml:"base_url"`
+	CompilerURL        string     `yaml:"compiler_url"`
+	RequestTimeoutMS   int        `yaml:"request_timeout_ms"`
+	MaxIdleConnections int        `yaml:"max_idle_connections"`
+	TLS                GoJudgeTLS `yaml:"tls"`
+}
+
+type GoJudgeTLS struct {
+	CAFile   string `yaml:"ca_file"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+}
+
+func (c GoJudgeTLS) Enabled() bool {
+	return c != (GoJudgeTLS{})
+}
+
+func (c GoJudgeTLS) Validate() error {
+	if c.Enabled() && (strings.TrimSpace(c.CAFile) == "" ||
+		strings.TrimSpace(c.CertFile) == "" || strings.TrimSpace(c.KeyFile) == "") {
+		return errors.New("executor.gojudge.tls requires ca_file, cert_file and key_file together")
+	}
+	return nil
 }
 
 type TestsConfig struct {
@@ -491,6 +510,15 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("SANDBOX_GOJUDGE_COMPILER_URL"); value != "" {
 		cfg.Executor.GoJudge.CompilerURL = value
 	}
+	if value := os.Getenv("SANDBOX_GOJUDGE_TLS_CA_FILE"); value != "" {
+		cfg.Executor.GoJudge.TLS.CAFile = value
+	}
+	if value := os.Getenv("SANDBOX_GOJUDGE_TLS_CERT_FILE"); value != "" {
+		cfg.Executor.GoJudge.TLS.CertFile = value
+	}
+	if value := os.Getenv("SANDBOX_GOJUDGE_TLS_KEY_FILE"); value != "" {
+		cfg.Executor.GoJudge.TLS.KeyFile = value
+	}
 	if err := applyIntEnv("SANDBOX_EXECUTOR_CLIENT_TIMEOUT_MS", &cfg.Executor.ClientTimeoutMS); err != nil {
 		return err
 	}
@@ -745,6 +773,9 @@ func (cfg Config) Validate() error {
 		}
 		if cfg.Executor.GoJudge.BaseURL == "" {
 			errs = append(errs, "executor.gojudge.base_url is required")
+		}
+		if err := cfg.Executor.GoJudge.TLS.Validate(); err != nil {
+			errs = append(errs, err.Error())
 		}
 	default:
 		errs = append(errs, "executor.type must be fake or gojudge")

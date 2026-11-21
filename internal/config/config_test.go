@@ -28,8 +28,12 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	t.Setenv("SANDBOX_EXECUTOR_TYPE", "gojudge")
 	t.Setenv("SANDBOX_FEATURE_FAKE_EXECUTOR", "false")
 	t.Setenv("SANDBOX_FEATURE_GOJUDGE_EXECUTOR", "true")
-	t.Setenv("SANDBOX_GOJUDGE_BASE_URL", "http://gojudge.test")
 	t.Setenv("SANDBOX_SHUTDOWN_TIMEOUT_MS", "24000")
+	t.Setenv("SANDBOX_GOJUDGE_BASE_URL", "https://gojudge.test")
+	t.Setenv("SANDBOX_GOJUDGE_COMPILER_URL", "https://compiler.test")
+	t.Setenv("SANDBOX_GOJUDGE_TLS_CA_FILE", "/tls/runner-ca.pem")
+	t.Setenv("SANDBOX_GOJUDGE_TLS_CERT_FILE", "/tls/worker.pem")
+	t.Setenv("SANDBOX_GOJUDGE_TLS_KEY_FILE", "/tls/worker-key.pem")
 	t.Setenv("SANDBOX_KAFKA_BROKERS", "kafka-1:9092,kafka-2:9092")
 	t.Setenv("SANDBOX_ARTIFACTS_PROVIDER", "filesystem")
 	t.Setenv("SANDBOX_ARTIFACTS_ROOT_DIR", ".test-artifacts")
@@ -44,11 +48,18 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	if cfg.Executor.Type != "gojudge" {
 		t.Errorf("expected env executor override, got %q", cfg.Executor.Type)
 	}
-	if cfg.Executor.GoJudge.BaseURL != "http://gojudge.test" {
+	if cfg.Executor.GoJudge.BaseURL != "https://gojudge.test" {
 		t.Errorf("expected env gojudge URL override, got %q", cfg.Executor.GoJudge.BaseURL)
 	}
 	if cfg.App.ShutdownTimeoutMS != 24000 {
 		t.Errorf("expected shutdown timeout override, got %d", cfg.App.ShutdownTimeoutMS)
+	}
+	if cfg.Executor.GoJudge.CompilerURL != "https://compiler.test" {
+		t.Error("go-judge compiler URL did not come from the environment")
+	}
+	wantTLS := GoJudgeTLS{CAFile: "/tls/runner-ca.pem", CertFile: "/tls/worker.pem", KeyFile: "/tls/worker-key.pem"}
+	if cfg.Executor.GoJudge.TLS != wantTLS {
+		t.Error("go-judge TLS paths did not come from the environment")
 	}
 	if len(cfg.Kafka.Brokers) != 2 {
 		t.Errorf("expected two kafka brokers, got %#v", cfg.Kafka.Brokers)
@@ -61,6 +72,18 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	}
 	if cfg.Tests.ObjectStorage.CacheTTLMS != 456 {
 		t.Errorf("expected tests cache ttl env override, got %d", cfg.Tests.ObjectStorage.CacheTTLMS)
+	}
+}
+
+func TestLoadRejectsPartialGoJudgeTLS(t *testing.T) {
+	clearSandboxEnv(t)
+	t.Setenv("SANDBOX_EXECUTOR_TYPE", "gojudge")
+	t.Setenv("SANDBOX_FEATURE_GOJUDGE_EXECUTOR", "true")
+	t.Setenv("SANDBOX_GOJUDGE_TLS_CA_FILE", "/tls/runner-ca.pem")
+
+	_, err := Load(filepath.Join("..", "..", "configs", "local.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "requires ca_file, cert_file and key_file together") {
+		t.Errorf("partial TLS configuration was not rejected: %v", err)
 	}
 }
 

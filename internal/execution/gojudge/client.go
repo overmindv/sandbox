@@ -3,6 +3,7 @@ package gojudge
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,12 +48,25 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, fmt.Errorf("go-judge base_url is required")
 	}
-	parsed, err := url.Parse(strings.TrimRight(cfg.BaseURL, "/"))
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"))
 	if err != nil {
-		return nil, fmt.Errorf("parse go-judge base_url: %w", err)
+		return nil, errors.New("invalid go-judge base_url")
 	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("go-judge base_url must be an absolute HTTP URL")
+	}
+	if parsed.Hostname() == "" || parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("go-judge base_url requires a host and cannot contain credentials, query or fragment")
+	}
+	var tlsConfig *tls.Config
+	if cfg.TLS.Enabled() {
+		if parsed.Scheme != "https" {
+			return nil, errors.New("go-judge mTLS requires https")
+		}
+		tlsConfig, err = loadTLS(cfg.TLS)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	timeout := time.Duration(cfg.RequestTimeoutMS) * time.Millisecond
@@ -66,6 +80,8 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 
 	transport := &http.Transport{
 		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSClientConfig:     tlsConfig,
+		TLSHandshakeTimeout: 5 * time.Second,
 		MaxIdleConns:        maxIdle,
 		MaxIdleConnsPerHost: maxIdle,
 		IdleConnTimeout:     90 * time.Second,
@@ -77,6 +93,9 @@ func NewClient(cfg config.GoJudgeClient) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}, nil
 }
@@ -175,6 +194,7 @@ func NewExecutor(cfg config.GoJudgeClient) (*Executor, error) {
 	if strings.TrimSpace(cfg.CompilerURL) != "" {
 		compiler, err := NewClient(config.GoJudgeClient{
 			BaseURL: cfg.CompilerURL, RequestTimeoutMS: int(goCompileBudget / time.Millisecond),
+			MaxIdleConnections: cfg.MaxIdleConnections, TLS: cfg.TLS,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("configure Go compiler: %w", err)
