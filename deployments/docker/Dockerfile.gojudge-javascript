@@ -1,0 +1,7 @@
+ARG GOJUDGE_RUNTIME_IMAGE=overmindv/sandbox-gojudge:local
+
+FROM docker.io/library/node:24.22.3-bookworm@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496 AS node-runtime
+FROM ${GOJUDGE_RUNTIME_IMAGE}
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+RUN --network=none test "$(/usr/local/bin/node --version)" = "v24.22.3"

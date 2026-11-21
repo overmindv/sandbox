@@ -51,27 +51,26 @@ languages:
     enabled: false
     adapter: javascript
     versions:
-      - version: "22"
+      - version: "24"
         default: true
-        runtime_image: overmindv/sandbox-javascript:22
+        runtime_image: overmindv/sandbox-gojudge-javascript:24.22.3
+        runtime_version: "24.22.3"
         limits_profile: default
-        test_modes:
-          - node
+        test_modes: []
         file_policy:
           max_files: 32
           allowed_extensions:
             - .js
             - .mjs
+            - .cjs
             - .json
           default_entrypoint: solution.js
-          default_test_entrypoint: test_solution.js
         execution:
           kind: interpreted
           working_dir: /workspace
           command:
             argv:
-              - node
-              - test_solution.js
+              - /usr/local/bin/node
           environment: {}
 
   - id: go
