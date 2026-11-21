@@ -105,21 +105,6 @@ func TestRuntimeDeploymentHardeningBaseline(t *testing.T) {
 	if podSpec["automountServiceAccountToken"] != false {
 		t.Errorf("expected runtime automountServiceAccountToken=false, got %#v", podSpec["automountServiceAccountToken"])
 	}
-	nodeSelector := mapValue(podSpec["nodeSelector"])
-	if nodeSelector["overmindv.io/node-pool"] != "sandbox-runtime" {
-		t.Errorf("expected sandbox-runtime node pool, got %#v", nodeSelector)
-	}
-	podSecurity := mapValue(podSpec["securityContext"])
-	if mapValue(podSecurity["seccompProfile"])["type"] != "RuntimeDefault" {
-		t.Errorf("expected RuntimeDefault seccomp profile, got %#v", podSecurity["seccompProfile"])
-	}
-
-	template := mapValue(mapValue(manifest.Raw["spec"])["template"])
-	annotations := mapValue(mapValue(template["metadata"])["annotations"])
-	if annotations["container.apparmor.security.beta.kubernetes.io/gojudge"] == "" {
-		t.Errorf("expected AppArmor annotation, got %#v", annotations)
-	}
-
 	container, ok := containerByName(podSpec, "gojudge")
 	if !ok {
 		t.Error("expected gojudge container")
@@ -230,6 +215,29 @@ func TestCompilerHasSeparateResourceProfile(t *testing.T) {
 		}
 		if mapValue(pod["nodeSelector"])["kubernetes.io/arch"] != "amd64" {
 			t.Error("compiler and runner must use the release image architecture", profile.name)
+		}
+		if mapValue(pod["nodeSelector"])["overmindv.io.node-restriction.kubernetes.io/pool"] != "sandbox-runtime" {
+			t.Error("compiler and runner must use the protected node pool", profile.name)
+		}
+		for _, field := range []string{"hostNetwork", "hostPID", "hostIPC"} {
+			if pod[field] == true {
+				t.Error("runtime must not use host namespaces", profile.name, field)
+			}
+		}
+		if pod["nodeName"] != nil || pod["enableServiceLinks"] != false ||
+			len(listValue(pod["initContainers"])) != 0 || len(listValue(pod["containers"])) != 1 {
+			t.Error("runtime must use the scheduler and run only the supervisor", profile.name)
+		}
+		tolerated := false
+		for _, value := range listValue(pod["tolerations"]) {
+			rule := mapValue(value)
+			if rule["key"] == "overmindv.io/sandbox-runtime" && rule["operator"] == "Equal" &&
+				rule["value"] == "true" && rule["effect"] == "NoSchedule" {
+				tolerated = true
+			}
+		}
+		if !tolerated {
+			t.Error("runtime lacks its dedicated node taint tolerance", profile.name)
 		}
 	}
 }

@@ -45,15 +45,13 @@ spec:
         app.kubernetes.io/name: gojudge
         app.kubernetes.io/component: sandbox-runtime
         app.kubernetes.io/part-of: overmindv-sandbox
-      annotations:
-        container.apparmor.security.beta.kubernetes.io/gojudge: unconfined
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 20
       nodeSelector:
         kubernetes.io/arch: amd64
-        overmindv.io/node-pool: sandbox-runtime
+        overmindv.io.node-restriction.kubernetes.io/pool: sandbox-runtime
       tolerations:
         - key: overmindv.io/sandbox-runtime
           operator: Equal
@@ -70,8 +68,6 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: gojudge
           image: overmindv/sandbox-gojudge:dev

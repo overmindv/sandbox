@@ -5,7 +5,7 @@ metadata:
 handler: runsc
 scheduling:
   nodeSelector:
-    overmindv.io/node-pool: sandbox-runtime
+    overmindv.io.node-restriction.kubernetes.io/pool: sandbox-runtime
   tolerations:
     - key: overmindv.io/sandbox-runtime
       operator: Equal
