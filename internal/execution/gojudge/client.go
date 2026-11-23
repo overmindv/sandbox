@@ -17,7 +17,7 @@ import (
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
-	"overmindv/sandbox/internal/languages/cpp"
+	"overmindv/sandbox/internal/languages/native"
 )
 
 var (
@@ -216,11 +216,11 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	if err != nil {
 		return execution.ExecutionResult{}, err
 	}
-	if command.Adapter == cpp.AdapterName {
+	if adapter, ok := native.Lookup(command.Adapter); ok {
 		if e.compiler == nil {
-			return execution.ExecutionResult{}, fmt.Errorf("%w: C++ compiler is not configured", ErrInfrastructure)
+			return execution.ExecutionResult{}, fmt.Errorf("%w: %s compiler is not configured", ErrInfrastructure, adapter.Label())
 		}
-		return e.executeCompiledCPP(ctx, command, request)
+		return e.executeCompiledNative(ctx, adapter, command, request)
 	}
 	if e.BuildAllowance(command) != 0 {
 		if !execution.IsExecutionMode(command) {
