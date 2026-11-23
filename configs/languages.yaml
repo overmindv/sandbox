@@ -120,34 +120,20 @@ languages:
     versions:
       - version: "17"
         default: true
-        runtime_image: overmindv/sandbox-cpp:17
+        runtime_image: overmindv/sandbox-gojudge-cpp:14.2.0
         limits_profile: compiled-default
-        test_modes:
-          - executable
+        test_modes: []
         file_policy:
           max_files: 64
           allowed_extensions:
             - .cpp
             - .hpp
             - .h
-            - .txt
           default_entrypoint: solution.cpp
-          default_test_entrypoint: test_solution.cpp
         execution:
           kind: compiled
           working_dir: /workspace
-          compile:
-            argv:
-              - g++
-              - -std=c++17
-              - -O2
-              - -pipe
-              - -static
-              - -s
-              - test_solution.cpp
-              - -o
-              - test_solution
           command:
             argv:
-              - ./test_solution
+              - ./_sandbox_cpp
           environment: {}

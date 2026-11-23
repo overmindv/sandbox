@@ -20,7 +20,7 @@ RUN --mount=type=cache,id=overmindv-gomod,target=/go/pkg/mod \
 	--mount=type=cache,id=overmindv-gojudge-build,target=/root/.cache/go-build \
 	CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -ldflags="-s -w" -o /out/go-judge github.com/criyle/go-judge/cmd/go-judge
 
-FROM docker.io/library/python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+FROM docker.io/library/python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 
 USER root
 
@@ -50,3 +50,12 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
 
 ENTRYPOINT ["/opt/go-judge"]
 CMD []
+
+FROM runtime AS cpp-compiler
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends g++-14=14.2.0-19 libc6-dev; \
+	rm -rf /var/lib/apt/lists/*; \
+	test "$(/usr/bin/g++-14 -dumpfullversion)" = "14.2.0"
+
+FROM runtime AS runner

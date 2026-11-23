@@ -6,8 +6,8 @@ The registry loads `configs/languages.yaml`, resolves `language.id` and `languag
 
 ## Current State
 
-Python and Go are enabled adapters. JavaScript and C++ are present in the
-manifest but disabled until their adapters are implemented.
+Python and Go are enabled by default. JavaScript and C++ need an explicit
+manifest change and their corresponding images.
 
 ## Python Source Files
 
@@ -122,6 +122,37 @@ Executor-specific raw output is normalized by the Go parser:
 - failed `go test -json` test event -> `failed`
 - build markers such as `[build failed]`, `undefined:`, or `syntax error` -> `compile_error`
 - zero exit code with no failures -> `passed`
+
+## C++17
+
+Use `language.id=cpp`, `language.version=17` and `execution.mode=execution`.
+Include the entrypoint (default `solution.cpp`) in `code.files`. The compiler
+builds all `.cpp` translation units in one invocation; `.h` and `.hpp` files
+are available for includes. Build systems, additional flags, and package
+downloads are not supported.
+
+The compiler uses GCC 14.2.0 with `-std=c++17 -O2 -pipe -static -s`. It has
+8 seconds of CPU time, 15 seconds of wall time, 512 MiB of memory, and 32 PIDs.
+The worker allows up to 20 seconds for the build and upload. The executable
+is bounded to 8 MiB and must fit the run's workspace limit. Use the
+`compiled-default` profile for local requests.
+
+The worker sends only the executable and the current stdin to each case.
+The runtime enforces the request's CPU, wall time, memory, PID and output limits.
+Hidden suites use the same input provider as other languages. The worker
+does not compare output with the expected answer; Tasks owns that verdict.
+
+Build the optional compiler image and run the local check:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.cpp.yml build gojudge gojudge-compiler
+sh scripts/test-cpp-live.sh
+```
+
+The Compose overlay changes only the compiler image. To enable C++ in a
+local worker, mount a copy of `configs/languages.yaml` at
+`/app/configs/languages.yaml` with `cpp.enabled` set to `true`. Keep
+`SANDBOX_GOJUDGE_COMPILER_URL` separate from `SANDBOX_GOJUDGE_BASE_URL`.
 
 ## Adapter Contract
 

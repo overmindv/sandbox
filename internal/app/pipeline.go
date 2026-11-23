@@ -14,6 +14,7 @@ import (
 	"overmindv/sandbox/internal/execution/gojudge"
 	"overmindv/sandbox/internal/kafka"
 	"overmindv/sandbox/internal/languages"
+	"overmindv/sandbox/internal/languages/cpp"
 	golangadapter "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/javascript"
 	pythonadapter "overmindv/sandbox/internal/languages/python"
@@ -108,7 +109,7 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 			return nil, nil, nil, err
 		}
 		languageRegistry, err = languages.NewRegistry(manifest,
-			pythonadapter.NewAdapter(), golangadapter.NewAdapter(), javascript.NewAdapter())
+			pythonadapter.NewAdapter(), golangadapter.NewAdapter(), javascript.NewAdapter(), cpp.NewAdapter())
 		if err != nil {
 			return nil, nil, nil, err
 		}

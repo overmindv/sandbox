@@ -42,3 +42,18 @@ jobs:
       - run: make ctest
         env:
           COMPONENT_TEST_DSN: postgres://postgres:sandbox-ci@localhost:5432/sandbox_test?sslmode=disable
+
+  cpp-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the runner and C++ compiler
+        run: |
+          docker build -f deployments/docker/Dockerfile.gojudge-runtime --target runner -t overmindv/sandbox-gojudge:local .
+          docker build -f deployments/docker/Dockerfile.gojudge-runtime --target cpp-compiler -t overmindv/sandbox-gojudge-cpp:14.2.0 .
+      - run: sh scripts/test-cpp-live.sh
