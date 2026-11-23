@@ -11,6 +11,7 @@ import (
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	golang "overmindv/sandbox/internal/languages/go"
+	"overmindv/sandbox/internal/languages/java"
 	"overmindv/sandbox/internal/languages/native"
 )
 
@@ -23,6 +24,9 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
+	if e.compiler != nil && command.Adapter == java.AdapterName && execution.IsExecutionMode(command) {
+		return javaCompileBudget + goRunHTTPReserve + goCleanupReserve
+	}
 	if _, ok := native.Lookup(command.Adapter); e.compiler != nil && ok && execution.IsExecutionMode(command) {
 		return nativeCompileBudget + goRunHTTPReserve + goCleanupReserve
 	}
@@ -55,11 +59,19 @@ func (e *Executor) executeCompiledGo(ctx context.Context, command execution.Exec
 func (e *Executor) runCompiledBinary(ctx, uploadCtx context.Context, command execution.ExecutionCommand, run Request,
 	name string, binary []byte, input map[string]MemoryFile,
 ) (execution.ExecutionResult, error) {
+	return e.runCompiledArtifact(ctx, uploadCtx, command, run, name, []string{"./" + name}, input, func(ctx context.Context, runner *Client) (string, error) {
+		return runner.putArtifact(ctx, binary)
+	})
+}
+
+func (e *Executor) runCompiledArtifact(ctx, uploadCtx context.Context, command execution.ExecutionCommand, run Request,
+	name string, argv []string, input map[string]MemoryFile, upload func(context.Context, *Client) (string, error),
+) (execution.ExecutionResult, error) {
 	runner, closeRunner := e.client.fileSession()
 	defer closeRunner()
 	// Upload, run and cleanup use their own context deadlines.
 	runner.httpClient.Timeout = 0
-	id, err := runner.putArtifact(uploadCtx, binary)
+	id, err := upload(uploadCtx, runner)
 	if err != nil {
 		return execution.ExecutionResult{}, phaseError(ctx, err, "compiled artifact upload")
 	}
@@ -69,7 +81,7 @@ func (e *Executor) runCompiledBinary(ctx, uploadCtx context.Context, command exe
 	maps.Copy(entry, input)
 	entry[name] = MemoryFile{FileID: id}
 	for i := range run.Cmd {
-		run.Cmd[i].Args = []string{"./" + name}
+		run.Cmd[i].Args = argv
 		run.Cmd[i].CopyIn = entry
 	}
 	runBudget := time.Duration(command.RuntimeLimits.WallMS)*time.Millisecond + goRunHTTPReserve

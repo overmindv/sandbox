@@ -142,6 +142,41 @@ is bounded to 8 MiB and must fit the run's workspace limit. Use the
 
 The worker sends only the executable and the current stdin to each case.
 The runtime enforces the request's CPU, wall time, memory, PID and output limits.
+
+## Java 21
+
+Java is disabled in `configs/languages.yaml`. To enable it locally, copy that
+manifest, set `enabled: true` for `java`, and point the worker's
+`config.languages_file` at the copy. Use `language.id: java`,
+`language.version: "21"` and `execution.mode: execution`.
+The Kafka schemas are unchanged.
+
+Submit up to 32 UTF-8 `.java` files. The default entrypoint is `Main.java`;
+`pkg/Main.java` selects `pkg.Main` and requires `package pkg;` in the source.
+Use ASCII identifiers in file paths and class names. The entry class must define
+`public static void main(String[] args)`. Maven, Gradle, annotation processing,
+module descriptors and third-party libraries are not supported.
+
+The compiler receives only sources and runs the pinned OpenJDK 21.0.13.1
+`javac --release 21`. The worker checks a class-only JAR (at most 512 entries
+and 1 MiB, with no compressed entries or manifest) before sending it to the
+runner. The runner uses the matching headless JRE without `javac`. Every case
+starts a fresh JVM and receives only the JAR and its own stdin.
+
+Requests need at least 96 MiB of memory and 16 PIDs. The JVM heap uses at most
+half the memory limit; go-judge enforces the total memory, PID, CPU, wall time
+and output limits. The JAR must also fit the request's workspace limit.
+
+Build and test locally without starting Kafka or changing the default runtime:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.java.yml build gojudge gojudge-compiler
+sh scripts/test-compiled-live.sh java
+```
+
+The Java overlay replaces the compiler image, so do not combine it with the
+C/C++ overlay. Both keep the default Python and Go support. The Kubernetes
+configuration and the production runtime images are unchanged.
 Hidden suites use the same input provider as other languages. The worker
 does not compare output with the expected answer; Tasks owns that verdict.
 

@@ -161,3 +161,26 @@ languages:
             argv:
               - ./_sandbox_c
           environment: {}
+
+  - id: java
+    display_name: Java
+    enabled: false
+    adapter: java
+    versions:
+      - version: "21"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge-java:21.0.13.1
+        limits_profile: compiled-default
+        test_modes: []
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .java
+          default_entrypoint: Main.java
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - /usr/bin/java
+          environment: {}

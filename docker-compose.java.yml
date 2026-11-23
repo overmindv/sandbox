@@ -1,0 +1,9 @@
+services:
+  gojudge:
+    build:
+      target: java-runner
+    image: overmindv/sandbox-gojudge-java:21.0.13.1
+  gojudge-compiler:
+    build:
+      target: java-compiler
+    image: overmindv/sandbox-gojudge-java-compiler:21.0.13.1

@@ -17,6 +17,7 @@ import (
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages/java"
 	"overmindv/sandbox/internal/languages/native"
 )
 
@@ -215,6 +216,12 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	request, err := RequestFromExecutionCommand(command)
 	if err != nil {
 		return execution.ExecutionResult{}, err
+	}
+	if command.Adapter == java.AdapterName {
+		if e.compiler == nil {
+			return execution.ExecutionResult{}, fmt.Errorf("%w: Java compiler is not configured", ErrInfrastructure)
+		}
+		return e.executeCompiledJava(ctx, command, request)
 	}
 	if adapter, ok := native.Lookup(command.Adapter); ok {
 		if e.compiler == nil {
