@@ -10,6 +10,7 @@ import (
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages/csharp"
 	golang "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
@@ -25,6 +26,9 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
+	if e.compiler != nil && command.Adapter == csharp.AdapterName && execution.IsExecutionMode(command) {
+		return csharpCompileBudget + goRunHTTPReserve + goCleanupReserve
+	}
 	if e.compiler != nil && command.Adapter == typescript.AdapterName && execution.IsExecutionMode(command) {
 		return tsCompileBudget + goRunHTTPReserve + goCleanupReserve
 	}

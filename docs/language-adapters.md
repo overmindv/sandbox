@@ -232,6 +232,33 @@ sh scripts/test-compiled-live.sh typescript
 
 The runner also supports the existing JavaScript adapter. The TypeScript
 overlay is local; it does not change Kafka or the deployment manifests.
+
+## C#
+
+The C# profile is disabled by default. For local use, copy the manifest, set
+`enabled: true` for `csharp`, and point `config.languages_file` at the copy.
+Requests use `language.id: csharp`, `language.version: "10.0"` and
+`execution.mode: execution`.
+
+Submit up to 32 UTF-8 `.cs` files. The default entry source is `Program.cs`.
+Use top-level statements or one valid `Main` method. Imports are explicit
+because there is no project file with implicit usings. The C# 14 compiler
+references the .NET 10 standard library. It does not accept projects, NuGet
+packages, response files or analyzer assemblies.
+
+The compiler and runtime are pinned to .NET SDK 10.0.404 and runtime 10.0.15.
+The worker verifies the headers of a managed executable assembly of up to
+1 MiB. The runner receives that DLL and one case's stdin. It has no SDK or
+compiler and uses the fixed .NET runtime configuration. Requests need at
+least 96 MiB of memory and 16 PIDs; the GC heap limit is half the case's
+memory limit, and go-judge enforces the total limit.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.csharp.yml build gojudge gojudge-compiler
+sh scripts/test-compiled-live.sh csharp
+```
+
+The overlay is local. Kafka and deployment manifests are unchanged.
 Hidden suites use the same input provider as other languages. The worker
 does not compare output with the expected answer; Tasks owns that verdict.
 

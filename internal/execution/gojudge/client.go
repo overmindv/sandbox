@@ -17,6 +17,7 @@ import (
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages/csharp"
 	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
 	"overmindv/sandbox/internal/languages/typescript"
@@ -217,6 +218,12 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	request, err := RequestFromExecutionCommand(command)
 	if err != nil {
 		return execution.ExecutionResult{}, err
+	}
+	if command.Adapter == csharp.AdapterName {
+		if e.compiler == nil {
+			return execution.ExecutionResult{}, fmt.Errorf("%w: C# compiler is not configured", ErrInfrastructure)
+		}
+		return e.executeCompiledCSharp(ctx, command, request)
 	}
 	if command.Adapter == typescript.AdapterName {
 		if e.compiler == nil {

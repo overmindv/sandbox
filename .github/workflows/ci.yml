@@ -96,3 +96,16 @@ jobs:
       - name: Build the TypeScript runner and compiler
         run: docker compose -f docker-compose.yml -f docker-compose.typescript.yml build gojudge gojudge-compiler
       - run: sh scripts/test-compiled-live.sh typescript
+
+  csharp-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the C# runner and compiler
+        run: docker compose -f docker-compose.yml -f docker-compose.csharp.yml build gojudge gojudge-compiler
+      - run: sh scripts/test-compiled-live.sh csharp
