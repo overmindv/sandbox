@@ -25,8 +25,19 @@ case "${1:-}" in
         executor_tests='^TestLiveGoJudgeJava$'
         worker_tests='^TestLiveWorkerExecutesJava$'
         ;;
+    kotlin)
+        profile=kotlin
+        runner_image=${SANDBOX_KOTLIN_RUNNER_IMAGE:-overmindv/sandbox-gojudge-kotlin:2.4.21}
+        compiler_image=${SANDBOX_KOTLIN_COMPILER_IMAGE:-overmindv/sandbox-gojudge-kotlin-compiler:2.4.21}
+        binary=${SANDBOX_KOTLIN_TEST_BINARY:-}
+        worker_binary=${SANDBOX_KOTLIN_WORKER_TEST_BINARY:-}
+        count=${SANDBOX_KOTLIN_TEST_COUNT:-1}
+        integration=SANDBOX_GOJUDGE_KOTLIN_INTEGRATION
+        executor_tests='^TestLiveGoJudgeKotlin$'
+        worker_tests='^TestLiveWorkerExecutesKotlin$'
+        ;;
     *)
-        printf 'Usage: %s cpp|java\n' "$0" >&2
+        printf 'Usage: %s cpp|java|kotlin\n' "$0" >&2
         exit 2
         ;;
 esac
@@ -88,7 +99,14 @@ for judge in "$runner" "$compiler"; do
     done
 done
 
-if [ "$profile" = java ]; then
+if [ "$profile" = kotlin ]; then
+    docker exec "$runner" test ! -x /usr/bin/javac
+    docker exec "$runner" test ! -x /usr/local/bin/sandbox-kotlin-compile
+    docker exec "$runner" test ! -e /usr/local/share/sandbox/kotlin-compiler.jar
+    docker exec "$runner" test -f /usr/local/share/sandbox/kotlin-stdlib.jar
+    version=$(docker exec "$compiler" /usr/bin/java -jar /usr/local/share/sandbox/kotlin-compiler.jar -version 2>&1)
+    printf '%s\n' "$version" | grep -q 'kotlinc-jvm 2\.4\.21 '
+elif [ "$profile" = java ]; then
     docker exec "$runner" test ! -x /usr/bin/javac
     docker exec "$runner" test ! -x /usr/local/bin/sandbox-java-compile
     [ "$(docker exec "$compiler" /usr/bin/javac --version)" = "javac 21.0.13.1" ]

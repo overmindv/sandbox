@@ -1,4 +1,4 @@
-package java
+package jvm
 
 import (
 	"encoding/base64"
@@ -16,7 +16,7 @@ import (
 func TestBuildCommand(t *testing.T) {
 	t.Parallel()
 	req, resolved := javaRequest()
-	command, err := (Adapter{}).BuildCommand(t.Context(), req, resolved)
+	command, err := Java().BuildCommand(t.Context(), req, resolved)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestRejectInvalidRequests(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			req, resolved := javaRequest()
 			mutate(&req)
-			if _, err := (Adapter{}).BuildCommand(t.Context(), req, resolved); !errors.Is(err, execution.ErrInvalidCommandPayload) {
+			if _, err := Java().BuildCommand(t.Context(), req, resolved); !errors.Is(err, execution.ErrInvalidCommandPayload) {
 				t.Error("expected a Java validation error", err)
 			}
 		})
@@ -63,8 +63,8 @@ func TestManifestKeepsJavaDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, language := range manifest.Languages {
-		if language.ID == AdapterName {
-			if language.Enabled || language.Adapter != AdapterName || len(language.Versions) != 1 ||
+		if language.ID == JavaName {
+			if language.Enabled || language.Adapter != JavaName || len(language.Versions) != 1 ||
 				language.Versions[0].Version != "21" || len(language.Versions[0].TestModes) != 0 {
 				t.Error("unexpected Java profile", language)
 			}

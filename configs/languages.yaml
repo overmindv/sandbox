@@ -184,3 +184,27 @@ languages:
             argv:
               - /usr/bin/java
           environment: {}
+
+  - id: kotlin
+    display_name: Kotlin
+    enabled: false
+    adapter: kotlin
+    versions:
+      - version: "2.4"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge-kotlin:2.4.21
+        runtime_version: "2.4.21"
+        limits_profile: compiled-default
+        test_modes: []
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .kt
+          default_entrypoint: Main.kt
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - /usr/bin/java
+          environment: {}

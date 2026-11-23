@@ -37,6 +37,28 @@ func TestArchiveRoundTrip(t *testing.T) {
 	}
 }
 
+func TestKotlinArchiveOmitsOnlyModuleIndex(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"pkg/MainKt.class":               {Data: java21},
+		"META-INF/sandbox.kotlin_module": {Data: []byte("module index")},
+	}
+	var archive bytes.Buffer
+	if err := WriteKotlinArchive(&archive, files); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateArchive(archive.Bytes(), "pkg.MainKt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteArchive(io.Discard, files); !errors.Is(err, ErrInvalid) {
+		t.Error("Java archive accepted a Kotlin module index", err)
+	}
+	files["META-INF/extra.kotlin_module"] = &fstest.MapFile{}
+	if err := WriteKotlinArchive(io.Discard, files); !errors.Is(err, ErrInvalid) {
+		t.Error("unexpected metadata was accepted", err)
+	}
+}
+
 func TestArchiveRejectsUnexpectedEntries(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"../Helper.class", "pkg/../Helper.class", "META-INF/MANIFEST.MF", "Main.class", "pkg/data.txt"} {

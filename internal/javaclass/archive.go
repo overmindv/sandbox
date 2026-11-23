@@ -18,6 +18,10 @@ const (
 	MaxSources   = 32
 	MaxClasses   = 512
 
+	KotlinCompilerPath = "/usr/local/bin/sandbox-kotlin-compile"
+	KotlinArchiveName  = "_sandbox_kotlin.jar"
+	KotlinStdlibPath   = "/usr/local/share/sandbox/kotlin-stdlib.jar"
+
 	CompileErrorExit  = 1
 	ArtifactLimitExit = 3
 )
@@ -26,19 +30,43 @@ var (
 	ErrInvalid = errors.New("invalid Java class archive")
 	ErrLimit   = errors.New("class archive exceeds Java limits")
 
-	sourceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*\.java$`)
+	sourceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$`)
 	className  = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*(/[A-Za-z_$][A-Za-z0-9_$]*)*\.class$`)
 	java21     = []byte{0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 65}
 )
 
 func MainClass(source string) (string, bool) {
-	if len(source) > 240 || !sourceName.MatchString(source) {
+	stem, ok := sourceStem(source, ".java")
+	if !ok {
 		return "", false
 	}
-	return strings.ReplaceAll(strings.TrimSuffix(source, ".java"), "/", "."), true
+	return strings.ReplaceAll(stem, "/", "."), true
+}
+
+func KotlinMainClass(source string) (string, bool) {
+	stem, ok := sourceStem(source, ".kt")
+	if !ok {
+		return "", false
+	}
+	i := strings.LastIndexByte(stem, '/') + 1
+	return strings.ReplaceAll(stem[:i], "/", ".") + strings.ToUpper(stem[i:i+1]) + stem[i+1:] + "Kt", true
+}
+
+func sourceStem(source, suffix string) (string, bool) {
+	stem, ok := strings.CutSuffix(source, suffix)
+	return stem, ok && len(source) <= 240 && sourceName.MatchString(stem)
 }
 
 func WriteArchive(dst io.Writer, classes fs.FS) error {
+	return writeArchive(dst, classes, "")
+}
+
+func WriteKotlinArchive(dst io.Writer, classes fs.FS) error {
+	// The compiler emits this index for Kotlin consumers of the module, not the JVM launcher.
+	return writeArchive(dst, classes, "META-INF/sandbox.kotlin_module")
+}
+
+func writeArchive(dst io.Writer, classes fs.FS, moduleIndex string) error {
 	w := zip.NewWriter(&boundedWriter{dst: dst, left: MaxBytes})
 	count := 0
 	err := fs.WalkDir(classes, ".", func(name string, entry fs.DirEntry, err error) error {
@@ -46,6 +74,9 @@ func WriteArchive(dst io.Writer, classes fs.FS) error {
 			return err
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if name == moduleIndex && entry.Type().IsRegular() {
 			return nil
 		}
 		count++

@@ -177,6 +177,33 @@ sh scripts/test-compiled-live.sh java
 The Java overlay replaces the compiler image, so do not combine it with the
 C/C++ overlay. Both keep the default Python and Go support. The Kubernetes
 configuration and the production runtime images are unchanged.
+
+## Kotlin/JVM
+
+The disabled Kotlin profile is available as `language.id: kotlin`,
+`language.version: "2.4"` and `execution.mode: execution`. To enable it
+locally, copy the manifest, set `enabled: true` for the `kotlin` entry,
+and point `config.languages_file` at the copy.
+
+Submit up to 32 UTF-8 `.kt` files. The entrypoint defaults to `Main.kt`
+with a top-level `fun main()`. For `pkg/Main.kt`, use `package pkg`;
+the JVM launches `pkg.MainKt`. Use ASCII identifiers in paths and class
+names. Scripts, build files, compiler plugins and external libraries are not
+accepted.
+
+Kotlin 2.4.21 is pinned by SHA-256 and compiles to JVM 21 bytecode. As with
+Java, the worker verifies a class-only archive of up to 1 MiB and 512 entries.
+The runner adds only the pinned Kotlin stdlib to the JRE image and starts a
+fresh JVM for each stdin. The archive must fit the request's workspace limit.
+Runtime requests need at least 96 MiB of memory and 16 PIDs.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.kotlin.yml build gojudge gojudge-compiler
+sh scripts/test-compiled-live.sh kotlin
+```
+
+The Kotlin images also support Java, Python and Go. Use only one compiler
+overlay at a time. Kafka and the Kubernetes configuration are unchanged.
 Hidden suites use the same input provider as other languages. The worker
 does not compare output with the expected answer; Tasks owns that verdict.
 
