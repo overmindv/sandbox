@@ -1,0 +1,9 @@
+services:
+  gojudge:
+    build:
+      target: csharp-runner
+    image: overmindv/sandbox-gojudge-csharp:10.0.15
+  gojudge-compiler:
+    build:
+      target: csharp-compiler
+    image: overmindv/sandbox-gojudge-csharp-compiler:10.0.404

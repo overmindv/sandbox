@@ -154,4 +154,31 @@ COPY --from=typescript-dist /opt/typescript/ /usr/local/share/sandbox-ts/
 COPY --from=typescript-tools /out/sandbox-ts-compile /usr/local/bin/
 RUN --network=none test "$(/usr/local/share/sandbox-ts/compiler/lib/tsc --version)" = "Version 7.0.2"
 
+FROM mcr.microsoft.com/dotnet/sdk:10.0.404-noble@sha256:2b1e13a22e46b55117f9cdb4b38e73172de08a30370166c8227d06cdaff82473 AS csharp-sdk
+FROM mcr.microsoft.com/dotnet/runtime:10.0.15-noble@sha256:21bf94ddcec8efebe4ffa64a6bfd30fc270ee87f54277aa08210e4a1d5a0c560 AS csharp-framework
+
+FROM go-runtime AS csharp-tools
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/sandbox-csharp-compile/ ./cmd/sandbox-csharp-compile/
+COPY internal/dotnetjob/ ./internal/dotnetjob/
+RUN --network=none CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off \
+	go build -trimpath -ldflags="-s -w" -o /out/sandbox-csharp-compile ./cmd/sandbox-csharp-compile
+
+FROM runtime AS csharp-runner
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends libgssapi-krb5-2 libicu76 libssl3t64 libstdc++6 zlib1g; \
+	rm -rf /var/lib/apt/lists/*
+COPY --from=csharp-framework /usr/share/dotnet/ /usr/local/share/dotnet/
+COPY runtimes/csharp/runtimeconfig.json /usr/local/share/sandbox-csharp/runtimeconfig.json
+RUN --network=none test ! -d /usr/local/share/dotnet/sdk && \
+	/usr/local/share/dotnet/dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 10.0.15 '
+
+FROM csharp-runner AS csharp-compiler
+COPY --from=csharp-sdk /usr/share/dotnet/sdk/10.0.404/Roslyn/bincore/ /usr/local/share/dotnet/sdk/10.0.404/Roslyn/bincore/
+COPY --from=csharp-sdk /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/10.0.15/ref/net10.0/ /usr/local/share/dotnet/packs/Microsoft.NETCore.App.Ref/10.0.15/ref/net10.0/
+COPY --from=csharp-tools /out/sandbox-csharp-compile /usr/local/bin/
+RUN --network=none /usr/local/share/dotnet/dotnet exec /usr/local/share/dotnet/sdk/10.0.404/Roslyn/bincore/csc.dll -version
+
 FROM runtime AS runner

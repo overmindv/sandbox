@@ -97,6 +97,30 @@ languages:
               - /usr/local/bin/sandbox-ts-run
           environment: {}
 
+  - id: csharp
+    display_name: C#
+    enabled: false
+    adapter: csharp
+    versions:
+      - version: "10.0"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge-csharp:10.0.15
+        runtime_version: "10.0.15"
+        limits_profile: compiled-default
+        test_modes: []
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .cs
+          default_entrypoint: Program.cs
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - /usr/local/share/dotnet/dotnet
+          environment: {}
+
   - id: go
     display_name: Go
     enabled: true

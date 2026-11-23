@@ -47,8 +47,19 @@ case "${1:-}" in
         executor_tests='^TestLiveGoJudgeTypeScript$'
         worker_tests='^TestLiveWorkerExecutesTypeScript$'
         ;;
+    csharp)
+        profile=csharp
+        runner_image=${SANDBOX_CSHARP_RUNNER_IMAGE:-overmindv/sandbox-gojudge-csharp:10.0.15}
+        compiler_image=${SANDBOX_CSHARP_COMPILER_IMAGE:-overmindv/sandbox-gojudge-csharp-compiler:10.0.404}
+        binary=${SANDBOX_CSHARP_TEST_BINARY:-}
+        worker_binary=${SANDBOX_CSHARP_WORKER_TEST_BINARY:-}
+        count=${SANDBOX_CSHARP_TEST_COUNT:-1}
+        integration=SANDBOX_GOJUDGE_CSHARP_INTEGRATION
+        executor_tests='^TestLiveGoJudgeCSharp$'
+        worker_tests='^TestLiveWorkerExecutesCSharp$'
+        ;;
     *)
-        printf 'Usage: %s cpp|java|kotlin|typescript\n' "$0" >&2
+        printf 'Usage: %s cpp|java|kotlin|typescript|csharp\n' "$0" >&2
         exit 2
         ;;
 esac
@@ -110,7 +121,14 @@ for judge in "$runner" "$compiler"; do
     done
 done
 
-if [ "$profile" = typescript ]; then
+if [ "$profile" = csharp ]; then
+    docker exec "$runner" test ! -d /usr/local/share/dotnet/sdk
+    docker exec "$runner" test ! -x /usr/local/bin/sandbox-csharp-compile
+    dotnet=/usr/local/share/dotnet/dotnet
+    runtimes=$(docker exec "$runner" "$dotnet" --list-runtimes)
+    printf '%s\n' "$runtimes" | grep -q '^Microsoft\.NETCore\.App 10\.0\.15 '
+    docker exec "$compiler" "$dotnet" exec /usr/local/share/dotnet/sdk/10.0.404/Roslyn/bincore/csc.dll -version
+elif [ "$profile" = typescript ]; then
     docker exec "$runner" test ! -e /usr/local/share/sandbox-ts/compiler
     docker exec "$runner" test ! -x /usr/local/bin/sandbox-ts-compile
     [ "$(docker exec "$runner" /usr/local/bin/node --version)" = "v24.22.3" ]

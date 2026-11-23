@@ -31,6 +31,11 @@ const n: number = Number(readFileSync(0, "utf8"));
 console.log(n * 2);`)
 }
 
+func TestLiveWorkerExecutesCSharp(t *testing.T) {
+	runLiveCompiledWorker(t, "SANDBOX_GOJUDGE_CSHARP_INTEGRATION", contracts.LanguageSpec{ID: "csharp", Version: "10.0"}, 96, "Program.cs",
+		"using System; Console.WriteLine(int.Parse(Console.ReadLine()!) * 2);")
+}
+
 func runLiveCompiledWorker(t *testing.T, enabled string, language contracts.LanguageSpec, memoryMB int, entry, source string) {
 	t.Helper()
 	if os.Getenv(enabled) != "1" {
