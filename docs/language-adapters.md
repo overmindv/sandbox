@@ -274,6 +274,28 @@ in a local worker, mount a copy of `configs/languages.yaml` at
 `/app/configs/languages.yaml` with `enabled: true` in the chosen profile. Keep
 `SANDBOX_GOJUDGE_COMPILER_URL` separate from `SANDBOX_GOJUDGE_BASE_URL`.
 
+## Swift Adapter
+
+Swift 6.4.3 is opt-in for `language.id: swift`, `language.version: "6.4"`
+and `execution.mode: execution`. Submit up to 32 UTF-8 `.swift` files with
+`main.swift` as the entrypoint. Helper files can be in subdirectories.
+SwiftPM projects, package downloads and user-supplied compiler flags or
+plugins are not supported.
+
+The compiler receives only the sources. It emits one ELF with fixed flags.
+The runner receives the checked artifact and per-case stdin, with the matching
+Swift runtime libraries but without Swift tools or submitted sources. Keep the
+runner and compiler endpoints separate and preserve the sandbox network and
+resource limits.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.swift.yml build gojudge gojudge-compiler
+sh scripts/test-compiled-live.sh swift
+```
+
+To enable the profile on a local worker, set `enabled: true` for `swift` in
+a copy of `configs/languages.yaml` and set `config.languages_file` to that copy.
+
 ## Adapter Contract
 
 Each adapter implements:

@@ -121,6 +121,30 @@ languages:
               - /usr/local/share/dotnet/dotnet
           environment: {}
 
+  - id: swift
+    display_name: Swift
+    enabled: false
+    adapter: swift
+    versions:
+      - version: "6.4"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge-swift:6.4.3
+        runtime_version: "6.4.3"
+        limits_profile: compiled-default
+        test_modes: []
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .swift
+          default_entrypoint: main.swift
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - ./_sandbox_swift
+          environment: {}
+
   - id: go
     display_name: Go
     enabled: true
