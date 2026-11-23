@@ -17,7 +17,7 @@ import (
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/languages"
-	"overmindv/sandbox/internal/languages/cpp"
+	"overmindv/sandbox/internal/languages/native"
 )
 
 const cppSource = `#include <iostream>
@@ -41,9 +41,9 @@ func TestCPPCompilerAndRunnerReceiveOnlyTheirInputs(t *testing.T) {
 			}
 			cmd := request.Cmd[0]
 			if !slices.Equal(cmd.Args, command.CompileArgv) || len(cmd.CopyIn) != 1 || cmd.CopyIn["solution.cpp"].Content == nil ||
-				cmd.Files[0].Content == nil || *cmd.Files[0].Content != "" || cmd.ClockLimit != int64(cppCompileWall) ||
+				cmd.Files[0].Content == nil || *cmd.Files[0].Content != "" || cmd.ClockLimit != int64(nativeCompileWall) ||
 				cmd.CPULimit != int64(8*time.Second) || cmd.MemoryLimit != 512<<20 ||
-				!slices.Equal(cmd.CopyOutCached, []string{cpp.ArtifactName + "?"}) {
+				!slices.Equal(cmd.CopyOutCached, []string{"_sandbox_cpp?"}) {
 				t.Error("compiler received unexpected inputs or limits")
 			}
 			_, _ = io.WriteString(w, `[{"status":"Accepted","exitStatus":0,"files":{"stdout":""},"fileIds":{"_sandbox_cpp":"ABCDEFGH"}}]`)
@@ -88,8 +88,9 @@ func checkCPPCases(t *testing.T, r *http.Request, command execution.ExecutionCom
 		return
 	}
 	for i, cmd := range request.Cmd {
-		if !slices.Equal(cmd.Args, command.Argv) || len(cmd.CopyIn) != 1 || cmd.CopyIn[cpp.ArtifactName].FileID != "JKLMNOPQ" ||
-			cmd.CopyIn[cpp.ArtifactName].Content != nil || cmd.Files[0].Content == nil || *cmd.Files[0].Content != command.Inputs[i] ||
+		artifact := cmd.CopyIn["_sandbox_cpp"]
+		if !slices.Equal(cmd.Args, command.Argv) || len(cmd.CopyIn) != 1 || artifact.FileID != "JKLMNOPQ" ||
+			artifact.Content != nil || cmd.Files[0].Content == nil || *cmd.Files[0].Content != command.Inputs[i] ||
 			cmd.CPULimit != millisToNanos(command.RuntimeLimits.CPUms) || cmd.ClockLimit != millisToNanos(command.RuntimeLimits.WallMS) ||
 			cmd.ProcLimit != command.RuntimeLimits.PIDs || cmd.MemoryLimit != command.RuntimeLimits.MemoryBytes ||
 			cmd.Files[1].Max != command.RuntimeLimits.StdoutBytes || cmd.Files[2].Max != command.RuntimeLimits.StderrBytes {
@@ -109,14 +110,79 @@ func TestCPPRequiresSeparateCompiler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executor.Execute(t.Context(), cppCommand(t, cppSource)); !errors.Is(err, ErrInfrastructure) {
-		t.Error("expected a missing compiler error", err)
+	commands := []execution.ExecutionCommand{
+		cppCommand(t, cppSource),
+		nativeCommand(t, native.C17(), nativeSource("solution.c", "int main(void) { return 0; }")),
+	}
+	for _, command := range commands {
+		if _, err := executor.Execute(t.Context(), command); !errors.Is(err, ErrInfrastructure) {
+			t.Error("expected a missing compiler error", command.Adapter, err)
+		}
 	}
 }
 
+type nativeScenario struct {
+	name   string
+	files  []contracts.SourceFile
+	status contracts.ExecutionStatus
+	limit  func(*execution.ExecutionCommand)
+	output []string
+}
+
 func TestLiveGoJudgeCPP(t *testing.T) {
+	runLiveNative(t, native.CPP17(), []nativeScenario{
+		{name: "accepted", files: cppFiles(cppSource), status: contracts.StatusOK, output: []string{"2\n", "4\n"}},
+		{name: "wrong output", files: cppFiles(`#include <cstdio>
+int main() { std::puts("0"); }`), status: contracts.StatusOK, output: []string{"0\n", "0\n"}},
+		{name: "syntax error", files: cppFiles("int main( {"), status: contracts.StatusCompileError},
+		{name: "wall limit", files: cppFiles(`#include <thread>
+int main() { std::this_thread::sleep_for(std::chrono::milliseconds(300)); }`),
+			status: contracts.StatusTimeLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.WallMS = 80 }},
+		{name: "output limit", files: cppFiles(`#include <cstdio>
+int main() { std::puts("01234567890123456789"); }`),
+			status: contracts.StatusOutputLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.StdoutBytes = 8 }},
+	})
+}
+
+func TestLiveGoJudgeC17(t *testing.T) {
+	multiFile := []contracts.SourceFile{
+		nativeSource("solution.c", `#if __STDC_VERSION__ != 201710L
+#error expected C17
+#endif
+#include <stdio.h>
+#include "calc.h"
+int main(void) {
+    int n;
+    if (scanf("%d", &n) == 1) printf("%d\n", score(n));
+}`),
+		nativeSource("calc.h", "int score(int n);"),
+		nativeSource("calc.c", `#include <math.h>
+#include "calc.h"
+int score(int n) { return n + (int)sqrt((double)n); }`),
+	}
+	cFiles := func(source string) []contracts.SourceFile {
+		return []contracts.SourceFile{nativeSource("solution.c", source)}
+	}
+	runLiveNative(t, native.C17(), []nativeScenario{
+		{name: "accepted multi-file", files: multiFile, status: contracts.StatusOK, output: []string{"2\n", "3\n"}},
+		{name: "syntax error", files: cFiles("int main( {"), status: contracts.StatusCompileError},
+		{name: "wall limit", files: cFiles(`#define _POSIX_C_SOURCE 200809L
+#include <time.h>
+int main(void) {
+    struct timespec delay = {0, 300000000};
+    nanosleep(&delay, NULL);
+}`), status: contracts.StatusTimeLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.WallMS = 80 }},
+		{name: "output limit", files: cFiles(`#include <stdio.h>
+int main(void) { puts("01234567890123456789"); }`),
+			status: contracts.StatusOutputLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.StdoutBytes = 8 }},
+	})
+}
+
+func runLiveNative(t *testing.T, adapter native.Adapter, tests []nativeScenario) {
+	t.Helper()
+
 	if os.Getenv("SANDBOX_GOJUDGE_CPP_INTEGRATION") != "1" {
-		t.Skip("requires an isolated C++ compiler and runtime")
+		t.Skip("requires an isolated compiler and runtime")
 	}
 	cfg := liveGoJudgeConfig()
 	cfg.CompilerURL = os.Getenv("SANDBOX_GOJUDGE_COMPILER_URL")
@@ -128,40 +194,23 @@ func TestLiveGoJudgeCPP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("compile time", func(t *testing.T) {
-		command := cppCommand(t, cppSource)
+		command := nativeCommand(t, adapter, tests[0].files...)
 		run, err := RequestFromExecutionCommand(command)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx, stop := context.WithTimeout(t.Context(), cppCompileBudget)
+		ctx, stop := context.WithTimeout(t.Context(), nativeCompileBudget)
 		defer stop()
 		start := time.Now()
-		binary, verdict, err := executor.buildCPP(ctx, command.AttemptID, command.CompileArgv, run.Cmd[0].CopyIn)
+		binary, verdict, err := executor.buildNative(ctx, adapter, command.AttemptID, command.CompileArgv, run.Cmd[0].CopyIn)
 		if err != nil || verdict != nil || !isELF(binary) {
 			t.Fatal("compiler did not return an executable", verdict, err)
 		}
-		t.Log("compiler round trip", time.Since(start), "budget", cppCompileBudget, "artifact bytes", len(binary))
+		t.Log("compiler round trip", time.Since(start), "budget", nativeCompileBudget, "artifact bytes", len(binary))
 	})
-	for _, tc := range []struct {
-		name   string
-		source string
-		status contracts.ExecutionStatus
-		limit  func(*execution.ExecutionCommand)
-		output []string
-	}{
-		{name: "accepted", source: cppSource, status: contracts.StatusOK, output: []string{"2\n", "4\n"}},
-		{name: "wrong output", source: `#include <cstdio>
-int main() { std::puts("0"); }`, status: contracts.StatusOK, output: []string{"0\n", "0\n"}},
-		{name: "syntax error", source: "int main( {", status: contracts.StatusCompileError},
-		{name: "wall limit", source: `#include <thread>
-int main() { std::this_thread::sleep_for(std::chrono::milliseconds(300)); }`,
-			status: contracts.StatusTimeLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.WallMS = 80 }},
-		{name: "output limit", source: `#include <cstdio>
-int main() { std::puts("01234567890123456789"); }`,
-			status: contracts.StatusOutputLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.StdoutBytes = 8 }},
-	} {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			command := cppCommand(t, tc.source)
+			command := nativeCommand(t, adapter, tc.files...)
 			if tc.limit != nil {
 				tc.limit(&command)
 			}
@@ -170,7 +219,10 @@ int main() { std::puts("01234567890123456789"); }`,
 			start := time.Now()
 			result, err := executor.Execute(ctx, command)
 			if err != nil || result.Status != tc.status {
-				t.Fatal("unexpected C++ outcome", result.Status, result.Error, err)
+				t.Fatal("unexpected result", result.Status, result.Error, err)
+			}
+			if tc.status == contracts.StatusCompileError && (result.Error == nil || result.Error.Code != adapter.Name()+"_compile_error") {
+				t.Errorf("unexpected compile error code: %v", result.Error)
 			}
 			caseWall := make([]int, 0, len(result.Cases))
 			for _, caseResult := range result.Cases {
@@ -194,30 +246,42 @@ int main() { std::puts("01234567890123456789"); }`,
 func cppCommand(t *testing.T, source string) execution.ExecutionCommand {
 	t.Helper()
 
+	return nativeCommand(t, native.CPP17(), cppFiles(source)...)
+}
+
+func cppFiles(source string) []contracts.SourceFile {
+	return []contracts.SourceFile{nativeSource("solution.cpp", source)}
+}
+
+func nativeSource(name, content string) contracts.SourceFile {
+	return contracts.SourceFile{Path: name, ContentB64: base64.StdEncoding.EncodeToString([]byte(content))}
+}
+
+func nativeCommand(t *testing.T, adapter native.Adapter, files ...contracts.SourceFile) execution.ExecutionCommand {
+	t.Helper()
+
 	manifest, err := languages.LoadManifest("configs/languages.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, language := range manifest.Languages {
-		if language.ID != cpp.AdapterName {
+		if language.ID != adapter.Name() {
 			continue
 		}
 		req := contracts.RunRequest{
-			AttemptID: "cpp-fixture",
-			Language:  contracts.LanguageSpec{ID: cpp.AdapterName, Version: "17"},
-			Code: contracts.CodeSpec{Files: []contracts.SourceFile{{
-				Path: "solution.cpp", ContentB64: base64.StdEncoding.EncodeToString([]byte(source)),
-			}}},
+			AttemptID: adapter.Name() + "-fixture",
+			Language:  contracts.LanguageSpec{ID: adapter.Name(), Version: "17"},
+			Code:      contracts.CodeSpec{Files: files},
 			Execution: &contracts.ExecutionSpec{Mode: contracts.ExecutionMode, Inputs: []string{"1", "2"}},
 			Limits: contracts.Limits{CPUms: 60, Wallms: 500, MemoryMB: 64, PIDs: 8,
 				StdoutBytes: 1024, StderrBytes: 1024, WorkspaceBytes: 5 << 20},
 		}
-		cmd, err := cpp.NewAdapter().BuildCommand(t.Context(), req, languages.ResolvedLanguage{Version: language.Versions[0]})
+		cmd, err := adapter.BuildCommand(t.Context(), req, languages.ResolvedLanguage{Version: language.Versions[0]})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return cmd
 	}
-	t.Fatal("C++ is missing from the manifest")
+	t.Fatal("compiled language is missing from the manifest", adapter.Name())
 	return execution.ExecutionCommand{}
 }

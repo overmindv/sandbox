@@ -52,7 +52,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build the runner and C++ compiler
+      - name: Build the runner and GCC compiler
         run: |
           docker build -f deployments/docker/Dockerfile.gojudge-runtime --target runner -t overmindv/sandbox-gojudge:local .
           docker build -f deployments/docker/Dockerfile.gojudge-runtime --target cpp-compiler -t overmindv/sandbox-gojudge-cpp:14.2.0 .

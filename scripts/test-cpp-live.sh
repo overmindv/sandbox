@@ -66,7 +66,9 @@ for judge in "$runner" "$compiler"; do
 done
 
 docker exec "$runner" test ! -x /usr/bin/g++-14
+docker exec "$runner" test ! -x /usr/bin/gcc-14
 [ "$(docker exec "$compiler" /usr/bin/g++-14 -dumpfullversion)" = "14.2.0" ]
+[ "$(docker exec "$compiler" /usr/bin/gcc-14 -dumpfullversion)" = "14.2.0" ]
 
 run_tests() {
     suite=$1
@@ -81,5 +83,5 @@ run_tests() {
         --entrypoint /fixture/test "$runner_image" -test.v "$@"
 }
 
-run_tests "$binary" -test.run '^TestLiveGoJudgeCPP$' -test.count "${SANDBOX_CPP_TEST_COUNT:-1}"
-run_tests "$worker_binary" -test.run '^TestLiveWorkerExecutesCPP$'
+run_tests "$binary" -test.run '^TestLiveGoJudge(CPP|C17)$' -test.count "${SANDBOX_CPP_TEST_COUNT:-1}"
+run_tests "$worker_binary" -test.run '^TestLiveWorkerExecutes(CPP|C17)$'

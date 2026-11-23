@@ -10,8 +10,8 @@ import (
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
-	"overmindv/sandbox/internal/languages/cpp"
 	golang "overmindv/sandbox/internal/languages/go"
+	"overmindv/sandbox/internal/languages/native"
 )
 
 const (
@@ -23,8 +23,8 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
-	if e.compiler != nil && command.Adapter == cpp.AdapterName && execution.IsExecutionMode(command) {
-		return cppCompileBudget + goRunHTTPReserve + goCleanupReserve
+	if _, ok := native.Lookup(command.Adapter); e.compiler != nil && ok && execution.IsExecutionMode(command) {
+		return nativeCompileBudget + goRunHTTPReserve + goCleanupReserve
 	}
 	if e.compiler != nil && command.Adapter == golang.AdapterName &&
 		(execution.IsExecutionMode(command) || command.TestMode == contracts.TestModeGoTest) {
