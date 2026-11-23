@@ -1,0 +1,5 @@
+services:
+  gojudge-compiler:
+    build:
+      target: cpp-compiler
+    image: overmindv/sandbox-gojudge-cpp:14.2.0

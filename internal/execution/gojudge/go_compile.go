@@ -10,6 +10,7 @@ import (
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages/cpp"
 	golang "overmindv/sandbox/internal/languages/go"
 )
 
@@ -22,6 +23,9 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
+	if e.compiler != nil && command.Adapter == cpp.AdapterName && execution.IsExecutionMode(command) {
+		return cppCompileBudget + goRunHTTPReserve + goCleanupReserve
+	}
 	if e.compiler != nil && command.Adapter == golang.AdapterName &&
 		(execution.IsExecutionMode(command) || command.TestMode == contracts.TestModeGoTest) {
 		return goCompileBudget + goRunHTTPReserve + goCleanupReserve
@@ -45,21 +49,27 @@ func (e *Executor) executeCompiledGo(ctx context.Context, command execution.Exec
 		return *verdict, nil
 	}
 
+	return e.runCompiledBinary(ctx, compileCtx, command, run, goArtifactName, binary, input)
+}
+
+func (e *Executor) runCompiledBinary(ctx, uploadCtx context.Context, command execution.ExecutionCommand, run Request,
+	name string, binary []byte, input map[string]MemoryFile,
+) (execution.ExecutionResult, error) {
 	runner, closeRunner := e.client.fileSession()
 	defer closeRunner()
 	// Upload, run and cleanup use their own context deadlines.
 	runner.httpClient.Timeout = 0
-	id, err := runner.putArtifact(compileCtx, binary)
-	cancel()
+	id, err := runner.putArtifact(uploadCtx, binary)
 	if err != nil {
-		return execution.ExecutionResult{}, phaseError(ctx, err, "Go artifact upload")
+		return execution.ExecutionResult{}, phaseError(ctx, err, "compiled artifact upload")
 	}
 	defer runner.deleteArtifact(ctx, id)
 
-	entry := maps.Clone(input)
-	entry[goArtifactName] = MemoryFile{FileID: id}
+	entry := make(map[string]MemoryFile, len(input)+1)
+	maps.Copy(entry, input)
+	entry[name] = MemoryFile{FileID: id}
 	for i := range run.Cmd {
-		run.Cmd[i].Args = []string{"./" + goArtifactName}
+		run.Cmd[i].Args = []string{"./" + name}
 		run.Cmd[i].CopyIn = entry
 	}
 	runBudget := time.Duration(command.RuntimeLimits.WallMS)*time.Millisecond + goRunHTTPReserve
@@ -70,7 +80,7 @@ func (e *Executor) executeCompiledGo(ctx context.Context, command execution.Exec
 	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 		return execution.ExecutionResult{}, fmt.Errorf("%w: compiled artifact unavailable in runner", ErrInfrastructure)
 	}
-	return result, phaseError(ctx, err, "Go runner request")
+	return result, phaseError(ctx, err, "compiled runner request")
 }
 
 func phaseError(parent context.Context, err error, phase string) error {

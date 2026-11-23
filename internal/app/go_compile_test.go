@@ -38,6 +38,18 @@ func TestLiveWorkerBuildsGoOutsideRunTimeout(t *testing.T) {
 			"package main; import \"fmt\"; func main(){ var n int; fmt.Scan(&n); fmt.Println(n*2) }")),
 	}}
 	req.Metadata = map[string]any{"attempt_deadline": time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339Nano)}
+	result := runCompiledWorkerFixture(t, cfg, req)
+	if result.Status != contracts.StatusOK || len(result.Cases) != 2 {
+		t.Fatal("unexpected Go result", result.Status, result.Error)
+	}
+	if result.Cases[0].Stdout != "2\n" || result.Cases[1].Stdout != "4\n" {
+		t.Error("incorrect case outputs")
+	}
+}
+
+func runCompiledWorkerFixture(t *testing.T, cfg config.Config, req contracts.RunRequest) contracts.RunResult {
+	t.Helper()
+
 	payload, err := kafka.EncodeRunRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -70,10 +82,8 @@ func TestLiveWorkerBuildsGoOutsideRunTimeout(t *testing.T) {
 		t.Fatal("worker did not publish a single result and commit")
 	}
 	result, err := kafka.DecodeRunResult(messages[0].Value)
-	if err != nil || result.Status != contracts.StatusOK || len(result.Cases) != 2 {
-		t.Fatal("unexpected Go result", result.Status, err, result.Error)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if result.Cases[0].Stdout != "2\n" || result.Cases[1].Stdout != "4\n" {
-		t.Error("incorrect case outputs")
-	}
+	return result
 }

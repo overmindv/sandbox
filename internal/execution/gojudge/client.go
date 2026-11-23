@@ -17,6 +17,7 @@ import (
 	"overmindv/sandbox/internal/config"
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
+	"overmindv/sandbox/internal/languages/cpp"
 )
 
 var (
@@ -197,10 +198,10 @@ func NewExecutor(cfg config.GoJudgeClient) (*Executor, error) {
 			MaxIdleConnections: cfg.MaxIdleConnections, TLS: cfg.TLS,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("configure Go compiler: %w", err)
+			return nil, fmt.Errorf("configure compiler: %w", err)
 		}
 		if compiler.baseURL.String() == client.baseURL.String() {
-			return nil, errors.New("Go compiler and runner must use separate endpoints")
+			return nil, errors.New("compiler and runner must use separate endpoints")
 		}
 		executor.compiler = compiler
 	}
@@ -214,6 +215,12 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	request, err := RequestFromExecutionCommand(command)
 	if err != nil {
 		return execution.ExecutionResult{}, err
+	}
+	if command.Adapter == cpp.AdapterName {
+		if e.compiler == nil {
+			return execution.ExecutionResult{}, fmt.Errorf("%w: C++ compiler is not configured", ErrInfrastructure)
+		}
+		return e.executeCompiledCPP(ctx, command, request)
 	}
 	if e.BuildAllowance(command) != 0 {
 		if !execution.IsExecutionMode(command) {
