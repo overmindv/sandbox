@@ -45,7 +45,7 @@ func checkJVMCompilerAndRunner(t *testing.T, adapter jvm.Adapter, entry, main, s
 	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "POST /file":
-			checkJVMUpload(t, r, adapter.ArchiveName(), archive.Bytes())
+			checkArtifactUpload(t, r, adapter.ArchiveName(), archive.Bytes())
 			_, _ = io.WriteString(w, `"JKLMNOPQ"`)
 		case "POST /run":
 			checkJVMCases(t, r, adapter.ArchiveName(), command)
@@ -138,7 +138,7 @@ func fakeJVMCompiler(t *testing.T, adapter jvm.Adapter, command execution.Execut
 	}))
 }
 
-func checkJVMUpload(t *testing.T, r *http.Request, archiveName string, want []byte) {
+func checkArtifactUpload(t *testing.T, r *http.Request, archiveName string, want []byte) {
 	t.Helper()
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -151,7 +151,7 @@ func checkJVMUpload(t *testing.T, r *http.Request, archiveName string, want []by
 		return
 	}
 	defer func() { _ = part.Close() }()
-	got, err := io.ReadAll(io.LimitReader(part, javaclass.MaxBytes+1))
+	got, err := io.ReadAll(io.LimitReader(part, int64(len(want))+1))
 	if err != nil || part.FileName() != archiveName || !bytes.Equal(got, want) {
 		t.Error("runner did not receive the checked class archive", err)
 	}

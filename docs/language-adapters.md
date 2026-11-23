@@ -204,6 +204,34 @@ sh scripts/test-compiled-live.sh kotlin
 
 The Kotlin images also support Java, Python and Go. Use only one compiler
 overlay at a time. Kafka and the Kubernetes configuration are unchanged.
+
+## TypeScript
+
+The TypeScript profile is disabled by default. For local use, copy the manifest,
+set `enabled: true` for `typescript`, and point `config.languages_file` at the
+copy. Requests use `language.id: typescript`, `language.version: "7.0"` and
+`execution.mode: execution`.
+
+Submit up to 32 UTF-8 `.ts` files with relative ASCII paths (up to 100 bytes).
+The default entrypoint is `solution.ts`. Use CommonJS-compatible imports, for
+example `import { score } from "./helper"`. The compiler supports strict type
+checking, enums and Node 24 built-ins. User declarations, `tsconfig.json`,
+`package.json`, plugins and npm dependencies are not accepted.
+
+The compiler image pins TypeScript 7.0.2 and the Node declarations by SHA-512.
+The worker accepts a bundle of up to 1 MiB containing only JavaScript files
+matching the submitted sources. The runner receives the checked bundle and
+one case's stdin. It unpacks the files inside that case and runs Node 24
+without the TypeScript compiler. Memory and PID limits must be at least
+64 MiB and 16; the bundle and unpacked bytes must fit the workspace limit.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.typescript.yml build gojudge gojudge-compiler
+sh scripts/test-compiled-live.sh typescript
+```
+
+The runner also supports the existing JavaScript adapter. The TypeScript
+overlay is local; it does not change Kafka or the deployment manifests.
 Hidden suites use the same input provider as other languages. The worker
 does not compare output with the expected answer; Tasks owns that verdict.
 

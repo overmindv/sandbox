@@ -73,6 +73,30 @@ languages:
               - /usr/local/bin/node
           environment: {}
 
+  - id: typescript
+    display_name: TypeScript
+    enabled: false
+    adapter: typescript
+    versions:
+      - version: "7.0"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge-typescript:7.0.2
+        runtime_version: "7.0.2"
+        limits_profile: compiled-default
+        test_modes: []
+        file_policy:
+          max_files: 32
+          allowed_extensions:
+            - .ts
+          default_entrypoint: solution.ts
+        execution:
+          kind: compiled
+          working_dir: /workspace
+          command:
+            argv:
+              - /usr/local/bin/sandbox-ts-run
+          environment: {}
+
   - id: go
     display_name: Go
     enabled: true

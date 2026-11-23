@@ -13,6 +13,7 @@ import (
 	golang "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
+	"overmindv/sandbox/internal/languages/typescript"
 )
 
 const (
@@ -24,6 +25,9 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
+	if e.compiler != nil && command.Adapter == typescript.AdapterName && execution.IsExecutionMode(command) {
+		return tsCompileBudget + goRunHTTPReserve + goCleanupReserve
+	}
 	if adapter, ok := jvm.Lookup(command.Adapter); e.compiler != nil && ok && execution.IsExecutionMode(command) {
 		return compileLimitsForJVM(adapter).budget() + goRunHTTPReserve + goCleanupReserve
 	}
