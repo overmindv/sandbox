@@ -92,8 +92,11 @@ RUN --network=none CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off \
 	go build -trimpath -ldflags="-s -w" -o /out/sandbox-kotlin-compile ./cmd/sandbox-kotlin-compile
 
 FROM runtime AS kotlin-dist
-ADD --checksum=sha256:7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd \
-	https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip /tmp/kotlin.zip
+RUN set -eu; \
+	curl -q --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+		--retry 2 --connect-timeout 15 --max-time 300 --output /tmp/kotlin.zip \
+		https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip; \
+	printf '%s  %s\n' 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd /tmp/kotlin.zip | sha256sum -c -
 RUN --network=none python3 -m zipfile -e /tmp/kotlin.zip /opt/kotlin-dist
 
 FROM java-runner AS kotlin-runner
