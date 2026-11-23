@@ -19,6 +19,7 @@ import (
 	"overmindv/sandbox/internal/execution"
 	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
+	"overmindv/sandbox/internal/languages/typescript"
 )
 
 var (
@@ -216,6 +217,12 @@ func (e *Executor) Execute(ctx context.Context, command execution.ExecutionComma
 	request, err := RequestFromExecutionCommand(command)
 	if err != nil {
 		return execution.ExecutionResult{}, err
+	}
+	if command.Adapter == typescript.AdapterName {
+		if e.compiler == nil {
+			return execution.ExecutionResult{}, fmt.Errorf("%w: TypeScript compiler is not configured", ErrInfrastructure)
+		}
+		return e.executeCompiledTypeScript(ctx, command, request)
 	}
 	if adapter, ok := jvm.Lookup(command.Adapter); ok {
 		if e.compiler == nil {

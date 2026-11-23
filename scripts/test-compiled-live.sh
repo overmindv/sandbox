@@ -36,8 +36,19 @@ case "${1:-}" in
         executor_tests='^TestLiveGoJudgeKotlin$'
         worker_tests='^TestLiveWorkerExecutesKotlin$'
         ;;
+    typescript)
+        profile=typescript
+        runner_image=${SANDBOX_TYPESCRIPT_RUNNER_IMAGE:-overmindv/sandbox-gojudge-typescript:7.0.2}
+        compiler_image=${SANDBOX_TYPESCRIPT_COMPILER_IMAGE:-overmindv/sandbox-gojudge-typescript-compiler:7.0.2}
+        binary=${SANDBOX_TYPESCRIPT_TEST_BINARY:-}
+        worker_binary=${SANDBOX_TYPESCRIPT_WORKER_TEST_BINARY:-}
+        count=${SANDBOX_TYPESCRIPT_TEST_COUNT:-1}
+        integration=SANDBOX_GOJUDGE_TYPESCRIPT_INTEGRATION
+        executor_tests='^TestLiveGoJudgeTypeScript$'
+        worker_tests='^TestLiveWorkerExecutesTypeScript$'
+        ;;
     *)
-        printf 'Usage: %s cpp|java|kotlin\n' "$0" >&2
+        printf 'Usage: %s cpp|java|kotlin|typescript\n' "$0" >&2
         exit 2
         ;;
 esac
@@ -99,7 +110,12 @@ for judge in "$runner" "$compiler"; do
     done
 done
 
-if [ "$profile" = kotlin ]; then
+if [ "$profile" = typescript ]; then
+    docker exec "$runner" test ! -e /usr/local/share/sandbox-ts/compiler
+    docker exec "$runner" test ! -x /usr/local/bin/sandbox-ts-compile
+    [ "$(docker exec "$runner" /usr/local/bin/node --version)" = "v24.22.3" ]
+    [ "$(docker exec "$compiler" /usr/local/share/sandbox-ts/compiler/lib/tsc --version)" = "Version 7.0.2" ]
+elif [ "$profile" = kotlin ]; then
     docker exec "$runner" test ! -x /usr/bin/javac
     docker exec "$runner" test ! -x /usr/local/bin/sandbox-kotlin-compile
     docker exec "$runner" test ! -e /usr/local/share/sandbox/kotlin-compiler.jar

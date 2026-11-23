@@ -110,4 +110,48 @@ COPY --from=kotlin-dist \
 	/usr/local/share/sandbox/
 COPY --from=kotlin-tools /out/sandbox-kotlin-compile /usr/local/bin/
 
+FROM go-runtime AS typescript-tools
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/sandbox-ts-compile/ ./cmd/sandbox-ts-compile/
+COPY cmd/sandbox-ts-run/ ./cmd/sandbox-ts-run/
+COPY internal/tsjob/ ./internal/tsjob/
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off
+RUN --network=none go build -trimpath -ldflags="-s -w" -o /out/sandbox-ts-compile ./cmd/sandbox-ts-compile && \
+	go build -trimpath -ldflags="-s -w" -o /out/sandbox-ts-run ./cmd/sandbox-ts-run
+
+FROM docker.io/library/node:24.22.3-bookworm@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496 AS typescript-node
+
+FROM runtime AS typescript-runner
+COPY --from=typescript-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=typescript-tools /out/sandbox-ts-run /usr/local/bin/
+RUN --network=none test "$(/usr/local/bin/node --version)" = "v24.22.3"
+
+FROM runtime AS typescript-dist
+ARG TARGETARCH
+RUN set -eux; \
+	unpack_package() { \
+		curl -fsSL --proto '=https' --retry 3 --max-time 180 "$1" -o /tmp/sandbox-ts.tgz; \
+		printf '%s  /tmp/sandbox-ts.tgz\n' "$2" | sha512sum -c -; \
+		mkdir -p "$3"; \
+		tar -xzf /tmp/sandbox-ts.tgz --strip-components=1 -C "$3"; \
+		rm -f /tmp/sandbox-ts.tgz; \
+	}; \
+	case "$TARGETARCH" in \
+		amd64) unpack_package 'https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz' \
+			'11875fd9c360eeb8025899f109d27e177577f4ef2285bdfb78702ed4b2bca00162ce04d06cf38aef31c75db3edf2b5f6e023aa3835de237b087f47c25c6ec7fc' /opt/typescript/compiler ;; \
+		arm64) unpack_package 'https://registry.npmjs.org/@typescript/typescript-linux-arm64/-/typescript-linux-arm64-7.0.2.tgz' \
+			'421e1e538ff2df20e39df8e3c8f62284c8f9fce0c8966b7e073bb5ece23e7e24910d6e7b4265394a237addec4f44d24f294cdc73520d6b535776b27e32a1e351' /opt/typescript/compiler ;; \
+		*) exit 1 ;; \
+	esac; \
+	unpack_package 'https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz' \
+		'f77778f700962640b237ceccc4ba4d37a2973c2c05c3b6d5520efd986515d4e4b8d09196c150abf27eb50d7092ab3ec257afd57cf91bef179ceee3f633e40759' /opt/typescript/node_modules/@types/node; \
+	unpack_package 'https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz' \
+		'591356fac2608f9381378ff42691c5aadab38696e75741ae07e3a8cc0f6008bedaf7ddd2994fb5241642ccb37162c6cc7c87832fe953b29843e6337937e9f4ce' /opt/typescript/node_modules/undici-types
+
+FROM runtime AS typescript-compiler
+COPY --from=typescript-dist /opt/typescript/ /usr/local/share/sandbox-ts/
+COPY --from=typescript-tools /out/sandbox-ts-compile /usr/local/bin/
+RUN --network=none test "$(/usr/local/share/sandbox-ts/compiler/lib/tsc --version)" = "Version 7.0.2"
+
 FROM runtime AS runner

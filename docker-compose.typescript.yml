@@ -1,0 +1,9 @@
+services:
+  gojudge:
+    build:
+      target: typescript-runner
+    image: overmindv/sandbox-gojudge-typescript:7.0.2
+  gojudge-compiler:
+    build:
+      target: typescript-compiler
+    image: overmindv/sandbox-gojudge-typescript-compiler:7.0.2
