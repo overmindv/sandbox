@@ -41,7 +41,7 @@ func runLiveNativeWorker(t *testing.T, id, filename, source string) {
 	cfg.Executor.Type = "gojudge"
 	cfg.Executor.GoJudge.BaseURL = os.Getenv("SANDBOX_GOJUDGE_BASE_URL")
 	cfg.Executor.GoJudge.CompilerURL = os.Getenv("SANDBOX_GOJUDGE_COMPILER_URL")
-	cfg.Config.LanguagesFile = enabledNativeManifest(t, id)
+	cfg.Config.LanguagesFile = enabledCompiledManifest(t, id)
 	cfg.FeatureFlags.GoJudgeExecutor = true
 	cfg.FeatureFlags.FakeExecutor = false
 	cfg.Server.HealthAddr = "127.0.0.1:0"
@@ -65,7 +65,7 @@ func runLiveNativeWorker(t *testing.T, id, filename, source string) {
 	}
 }
 
-func enabledNativeManifest(t *testing.T, id string) string {
+func enabledCompiledManifest(t *testing.T, id string) string {
 	t.Helper()
 
 	manifest, err := languages.LoadManifest("configs/languages.yaml")

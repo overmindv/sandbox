@@ -86,9 +86,14 @@ func (c *Client) putArtifact(ctx context.Context, data []byte) (string, error) {
 	if len(data) > maxArtifactBytes || !isELF(data) {
 		return "", ErrProtocol
 	}
+	return c.putNamedArtifact(ctx, goArtifactName, data)
+}
+
+// Callers must validate the format and size before selecting an artifact name.
+func (c *Client) putNamedArtifact(ctx context.Context, name string, data []byte) (string, error) {
 	var envelope bytes.Buffer
 	form := multipart.NewWriter(&envelope)
-	if _, err := form.CreateFormFile("file", goArtifactName); err != nil {
+	if _, err := form.CreateFormFile("file", name); err != nil {
 		return "", err
 	}
 	headerLen := envelope.Len()

@@ -20,6 +20,14 @@ RUN --mount=type=cache,id=overmindv-gomod,target=/go/pkg/mod \
 	--mount=type=cache,id=overmindv-gojudge-build,target=/root/.cache/go-build \
 	CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -ldflags="-s -w" -o /out/go-judge github.com/criyle/go-judge/cmd/go-judge
 
+FROM go-runtime AS java-tools
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/sandbox-java-compile/ ./cmd/sandbox-java-compile/
+COPY internal/javaclass/ ./internal/javaclass/
+RUN --network=none CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off \
+	go build -trimpath -ldflags="-s -w" -o /out/sandbox-java-compile ./cmd/sandbox-java-compile
+
 FROM docker.io/library/python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 
 USER root
@@ -57,5 +65,22 @@ RUN set -eux; \
 	apt-get install -y --no-install-recommends g++-14=14.2.0-19 libc6-dev; \
 	rm -rf /var/lib/apt/lists/*; \
 	test "$(/usr/bin/g++-14 -dumpfullversion)" = "14.2.0"
+
+FROM runtime AS java-runner
+ARG OPENJDK_PACKAGE_VERSION=21.0.13.1+2-1~deb13u1
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends "openjdk-21-jre-headless=${OPENJDK_PACKAGE_VERSION}"; \
+	rm -rf /var/lib/apt/lists/*; \
+	test "$(dpkg-query -W -f='${Version}' openjdk-21-jre-headless)" = "${OPENJDK_PACKAGE_VERSION}"; \
+	test ! -e /usr/bin/javac
+
+FROM java-runner AS java-compiler
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends "openjdk-21-jdk-headless=${OPENJDK_PACKAGE_VERSION}"; \
+	rm -rf /var/lib/apt/lists/*; \
+	test "$(dpkg-query -W -f='${Version}' openjdk-21-jdk-headless)" = "${OPENJDK_PACKAGE_VERSION}"
+COPY --from=java-tools /out/sandbox-java-compile /usr/local/bin/
 
 FROM runtime AS runner
