@@ -113,7 +113,7 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		}
 		languageRegistry, err = languages.NewRegistry(manifest,
 			pythonadapter.NewAdapter(), golangadapter.NewAdapter(), javascript.NewAdapter(), native.CPP17(), native.C17(),
-			jvm.Java(), jvm.Kotlin(), typescript.Adapter{}, csharp.Adapter{})
+			jvm.Java(), jvm.Kotlin(), typescript.Adapter{}, csharp.Adapter{}, native.Swift())
 		if err != nil {
 			return nil, nil, nil, err
 		}

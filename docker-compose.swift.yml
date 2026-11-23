@@ -1,0 +1,9 @@
+services:
+  gojudge:
+    build:
+      target: swift-runner
+    image: overmindv/sandbox-gojudge-swift:6.4.3
+  gojudge-compiler:
+    build:
+      target: swift-compiler
+    image: overmindv/sandbox-gojudge-swift-compiler:6.4.3

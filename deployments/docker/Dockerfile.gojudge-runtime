@@ -181,4 +181,31 @@ COPY --from=csharp-sdk /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/10.0.15
 COPY --from=csharp-tools /out/sandbox-csharp-compile /usr/local/bin/
 RUN --network=none /usr/local/share/dotnet/dotnet exec /usr/local/share/dotnet/sdk/10.0.404/Roslyn/bincore/csc.dll -version
 
+FROM docker.io/library/swift:6.4.3-noble@sha256:4ed5e0210b244aab174450e0b79014c17db60c63c6daf0709347fe50c767293a AS swift-sdk
+FROM docker.io/library/swift:6.4.3-noble-slim@sha256:2bae57bd68ac95daa2d4aa2c7c590d4cf366c6007b4e5bc355e6cbe4dad16dcb AS swift-framework
+
+FROM runtime AS swift-runner
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends libatomic1 libstdc++6 libxml2; \
+	rm -rf /var/lib/apt/lists/*
+COPY --from=swift-framework /usr/lib/swift/linux/*.so /usr/lib/swift/linux/
+RUN --network=none test ! -e /usr/bin/swiftc && test -f /usr/lib/swift/linux/libswiftCore.so
+
+FROM swift-sdk AS swift-compiler
+USER root
+WORKDIR /opt
+COPY --from=judge /opt/mount.yaml /opt/
+COPY --from=judge-build /out/go-judge /opt/go-judge
+COPY --from=go-runtime /usr/local/go /usr/local/go
+COPY --from=go-test-tools /out/ /usr/local/bin/
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends curl; \
+	rm -rf /var/lib/apt/lists/*
+RUN --network=none /usr/bin/swiftc --version | grep -F 'Swift version 6.4.3' && \
+	test "$(GOTOOLCHAIN=local /usr/local/go/bin/go env GOVERSION)" = "go1.26.11"
+ENTRYPOINT ["/opt/go-judge"]
+CMD []
+
 FROM runtime AS runner

@@ -99,11 +99,11 @@ func checkCPPCases(t *testing.T, r *http.Request, command execution.ExecutionCom
 	}
 }
 
-func TestCPPRequiresSeparateCompiler(t *testing.T) {
+func TestNativeRequiresSeparateCompiler(t *testing.T) {
 	t.Parallel()
 
 	runner := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("C++ must not fall back to running on the runtime endpoint")
+		t.Error("native compilation must not fall back to the runtime endpoint")
 	}))
 	defer runner.Close()
 	executor, err := NewExecutor(config.GoJudgeClient{BaseURL: runner.URL})
@@ -113,6 +113,7 @@ func TestCPPRequiresSeparateCompiler(t *testing.T) {
 	commands := []execution.ExecutionCommand{
 		cppCommand(t, cppSource),
 		nativeCommand(t, native.C17(), nativeSource("solution.c", "int main(void) { return 0; }")),
+		nativeCommand(t, native.Swift(), nativeSource("main.swift", "print(0)")),
 	}
 	for _, command := range commands {
 		if _, err := executor.Execute(t.Context(), command); !errors.Is(err, ErrInfrastructure) {
@@ -130,7 +131,7 @@ type nativeScenario struct {
 }
 
 func TestLiveGoJudgeCPP(t *testing.T) {
-	runLiveNative(t, native.CPP17(), []nativeScenario{
+	runLiveNative(t, "SANDBOX_GOJUDGE_CPP_INTEGRATION", native.CPP17(), []nativeScenario{
 		{name: "accepted", files: cppFiles(cppSource), status: contracts.StatusOK, output: []string{"2\n", "4\n"}},
 		{name: "wrong output", files: cppFiles(`#include <cstdio>
 int main() { std::puts("0"); }`), status: contracts.StatusOK, output: []string{"0\n", "0\n"}},
@@ -163,7 +164,7 @@ int score(int n) { return n + (int)sqrt((double)n); }`),
 	cFiles := func(source string) []contracts.SourceFile {
 		return []contracts.SourceFile{nativeSource("solution.c", source)}
 	}
-	runLiveNative(t, native.C17(), []nativeScenario{
+	runLiveNative(t, "SANDBOX_GOJUDGE_CPP_INTEGRATION", native.C17(), []nativeScenario{
 		{name: "accepted multi-file", files: multiFile, status: contracts.StatusOK, output: []string{"2\n", "3\n"}},
 		{name: "syntax error", files: cFiles("int main( {"), status: contracts.StatusCompileError},
 		{name: "wall limit", files: cFiles(`#define _POSIX_C_SOURCE 200809L
@@ -178,10 +179,33 @@ int main(void) { puts("01234567890123456789"); }`),
 	})
 }
 
-func runLiveNative(t *testing.T, adapter native.Adapter, tests []nativeScenario) {
+func TestLiveGoJudgeSwift(t *testing.T) {
+	multiFile := []contracts.SourceFile{
+		nativeSource("main.swift", `import Foundation
+if FileManager.default.fileExists(atPath: "main.swift") {
+    print("source should only be present at compile time")
+} else if let line = readLine(), let n = Int(line) {
+    print(doubled(n))
+}`),
+		nativeSource("src/Arithmetic.swift", "func doubled(_ n: Int) -> Int { n * 2 }"),
+	}
+	swiftFiles := func(source string) []contracts.SourceFile {
+		return []contracts.SourceFile{nativeSource("main.swift", source)}
+	}
+	runLiveNative(t, "SANDBOX_GOJUDGE_SWIFT_INTEGRATION", native.Swift(), []nativeScenario{
+		{name: "accepted multi-file", files: multiFile, status: contracts.StatusOK, output: []string{"2\n", "4\n"}},
+		{name: "syntax error", files: swiftFiles("let n: = 0"), status: contracts.StatusCompileError},
+		{name: "wall limit", files: swiftFiles("import Glibc\nusleep(300_000)"),
+			status: contracts.StatusTimeLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.WallMS = 80 }},
+		{name: "output limit", files: swiftFiles(`print(String(repeating: "0", count: 20))`),
+			status: contracts.StatusOutputLimitExceeded, limit: func(c *execution.ExecutionCommand) { c.RuntimeLimits.StdoutBytes = 8 }},
+	})
+}
+
+func runLiveNative(t *testing.T, enabled string, adapter native.Adapter, tests []nativeScenario) {
 	t.Helper()
 
-	if os.Getenv("SANDBOX_GOJUDGE_CPP_INTEGRATION") != "1" {
+	if os.Getenv(enabled) != "1" {
 		t.Skip("requires an isolated compiler and runtime")
 	}
 	cfg := liveGoJudgeConfig()
@@ -270,7 +294,7 @@ func nativeCommand(t *testing.T, adapter native.Adapter, files ...contracts.Sour
 		}
 		req := contracts.RunRequest{
 			AttemptID: adapter.Name() + "-fixture",
-			Language:  contracts.LanguageSpec{ID: adapter.Name(), Version: "17"},
+			Language:  contracts.LanguageSpec{ID: adapter.Name(), Version: language.Versions[0].Version},
 			Code:      contracts.CodeSpec{Files: files},
 			Execution: &contracts.ExecutionSpec{Mode: contracts.ExecutionMode, Inputs: []string{"1", "2"}},
 			Limits: contracts.Limits{CPUms: 60, Wallms: 500, MemoryMB: 64, PIDs: 8,

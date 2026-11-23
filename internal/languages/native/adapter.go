@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"unicode/utf8"
 
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	CName   = "c"
-	CPPName = "cpp"
+	CName     = "c"
+	CPPName   = "cpp"
+	SwiftName = "swift"
 )
 
 type Adapter struct {
@@ -33,12 +35,18 @@ func CPP17() Adapter {
 	return Adapter{name: CPPName, label: "C++", compiler: "/usr/bin/g++-14", standard: "-std=c++17", sourceExt: ".cpp"}
 }
 
+func Swift() Adapter {
+	return Adapter{name: SwiftName, label: "Swift", compiler: "/usr/bin/swiftc", sourceExt: ".swift"}
+}
+
 func Lookup(name string) (Adapter, bool) {
 	switch name {
 	case CName:
 		return C17(), true
 	case CPPName:
 		return CPP17(), true
+	case SwiftName:
+		return Swift(), true
 	default:
 		return Adapter{}, false
 	}
@@ -71,8 +79,11 @@ func (a Adapter) BuildCommand(_ context.Context, req contracts.RunRequest, resol
 	if path.Ext(entry) != a.sourceExt {
 		return execution.ExecutionCommand{}, fmt.Errorf("%w: %s entrypoint must be a %s file", execution.ErrInvalidCommandPayload, a.label, a.sourceExt)
 	}
+	if a.name == SwiftName && path.Base(entry) != "main.swift" {
+		return execution.ExecutionCommand{}, fmt.Errorf("%w: Swift entrypoint must be named main.swift", execution.ErrInvalidCommandPayload)
+	}
 	artifact := a.ArtifactName()
-	argv := []string{a.compiler, a.standard, "-O2", "-pipe", "-static", "-s", "-fdiagnostics-color=never", "-o", artifact}
+	argv := a.compileArgs(artifact)
 	foundEntry := false
 	for _, file := range command.Files {
 		name, err := security.NormalizeRelativePath(file.Path, security.DefaultPolicy())
@@ -82,10 +93,13 @@ func (a Adapter) BuildCommand(_ context.Context, req contracts.RunRequest, resol
 		ext := path.Ext(name)
 		switch {
 		case ext == a.sourceExt:
+			if a.name == SwiftName && !utf8.Valid(file.Content) {
+				return execution.ExecutionCommand{}, fmt.Errorf("%w: expected UTF-8 Swift source", execution.ErrInvalidCommandPayload)
+			}
 			// A workspace operand must not be interpreted as a compiler option.
 			argv = append(argv, "./"+name)
 			foundEntry = foundEntry || name == entry
-		case ext == ".h" || (a.name == CPPName && ext == ".hpp"):
+		case (a.name == CName || a.name == CPPName) && ext == ".h", a.name == CPPName && ext == ".hpp":
 		default:
 			return execution.ExecutionCommand{}, fmt.Errorf("%w: unsupported %s file extension", execution.ErrInvalidCommandPayload, a.label)
 		}
@@ -103,4 +117,12 @@ func (a Adapter) BuildCommand(_ context.Context, req contracts.RunRequest, resol
 	command.Argv = []string{"./" + artifact}
 	command.CompileArgv = argv
 	return command, nil
+}
+
+func (a Adapter) compileArgs(artifact string) []string {
+	if a.name == SwiftName {
+		return []string{a.compiler, "-O", "-whole-module-optimization", "-j1", "-module-cache-path", "/tmp/sandbox-swift-cache",
+			"-module-name", "SandboxSolution", "-o", artifact}
+	}
+	return []string{a.compiler, a.standard, "-O2", "-pipe", "-static", "-s", "-fdiagnostics-color=never", "-o", artifact}
 }

@@ -46,6 +46,49 @@ func TestBuildsC17Command(t *testing.T) {
 	checkCommand(t, command, req, want, "./_sandbox_c")
 }
 
+func TestBuildsSwiftCommand(t *testing.T) {
+	t.Parallel()
+
+	req := sampleRequest(SwiftName, "src/main.swift")
+	req.Language.Version = "6.4"
+	req.Code.Entrypoint = "src/main.swift"
+	req.Code.Files = append(req.Code.Files, contracts.SourceFile{Path: "-helper.swift", ContentB64: fixtureContent})
+	req.Metadata = map[string]any{"SWIFTFLAGS": "-v"}
+	command, err := Swift().BuildCommand(t.Context(), req, nativeLanguage(t, SwiftName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/usr/bin/swiftc", "-O", "-whole-module-optimization", "-j1", "-module-cache-path", "/tmp/sandbox-swift-cache", "-module-name", "SandboxSolution",
+		"-o", "_sandbox_swift", "./src/main.swift", "./-helper.swift"}
+	checkCommand(t, command, req, want, "./_sandbox_swift")
+}
+
+func TestSwiftRejectsNonSourceInput(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		file contracts.SourceFile
+	}{
+		{"package executable", contracts.SourceFile{Path: "helper.so", ContentB64: fixtureContent}},
+		{"response file", contracts.SourceFile{Path: "options.rsp", ContentB64: fixtureContent}},
+		{"invalid UTF-8", contracts.SourceFile{Path: "helper.swift", ContentB64: "/w=="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := sampleRequest(SwiftName, "main.swift")
+			req.Code.Files = append(req.Code.Files, tc.file)
+			if _, err := Swift().BuildCommand(t.Context(), req, nativeLanguage(t, SwiftName)); err == nil {
+				t.Error("invalid Swift input reached the compiler")
+			}
+		})
+	}
+	req := sampleRequest(SwiftName, "entry.swift")
+	req.Code.Entrypoint = "entry.swift"
+	if _, err := Swift().BuildCommand(t.Context(), req, nativeLanguage(t, SwiftName)); err == nil {
+		t.Error("invalid Swift entrypoint was accepted")
+	}
+}
+
 func checkCommand(t *testing.T, command execution.ExecutionCommand, req contracts.RunRequest, want []string, run string) {
 	t.Helper()
 
