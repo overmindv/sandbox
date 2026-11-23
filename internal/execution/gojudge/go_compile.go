@@ -11,7 +11,7 @@ import (
 	"overmindv/sandbox/internal/contracts"
 	"overmindv/sandbox/internal/execution"
 	golang "overmindv/sandbox/internal/languages/go"
-	"overmindv/sandbox/internal/languages/java"
+	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
 )
 
@@ -24,8 +24,8 @@ const (
 )
 
 func (e *Executor) BuildAllowance(command execution.ExecutionCommand) time.Duration {
-	if e.compiler != nil && command.Adapter == java.AdapterName && execution.IsExecutionMode(command) {
-		return javaCompileBudget + goRunHTTPReserve + goCleanupReserve
+	if adapter, ok := jvm.Lookup(command.Adapter); e.compiler != nil && ok && execution.IsExecutionMode(command) {
+		return compileLimitsForJVM(adapter).budget() + goRunHTTPReserve + goCleanupReserve
 	}
 	if _, ok := native.Lookup(command.Adapter); e.compiler != nil && ok && execution.IsExecutionMode(command) {
 		return nativeCompileBudget + goRunHTTPReserve + goCleanupReserve

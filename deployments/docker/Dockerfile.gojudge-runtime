@@ -83,4 +83,31 @@ RUN set -eux; \
 	test "$(dpkg-query -W -f='${Version}' openjdk-21-jdk-headless)" = "${OPENJDK_PACKAGE_VERSION}"
 COPY --from=java-tools /out/sandbox-java-compile /usr/local/bin/
 
+FROM go-runtime AS kotlin-tools
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/sandbox-kotlin-compile/ ./cmd/sandbox-kotlin-compile/
+COPY internal/javaclass/ ./internal/javaclass/
+RUN --network=none CGO_ENABLED=0 GOTOOLCHAIN=local GOENV=off \
+	go build -trimpath -ldflags="-s -w" -o /out/sandbox-kotlin-compile ./cmd/sandbox-kotlin-compile
+
+FROM runtime AS kotlin-dist
+ADD --checksum=sha256:7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd \
+	https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip /tmp/kotlin.zip
+RUN --network=none python3 -m zipfile -e /tmp/kotlin.zip /opt/kotlin-dist
+
+FROM java-runner AS kotlin-runner
+COPY --from=kotlin-dist /opt/kotlin-dist/kotlinc/lib/kotlin-stdlib.jar /usr/local/share/sandbox/kotlin-stdlib.jar
+
+FROM java-compiler AS kotlin-compiler
+COPY --from=kotlin-dist \
+	/opt/kotlin-dist/kotlinc/lib/kotlin-compiler.jar \
+	/opt/kotlin-dist/kotlinc/lib/annotations-13.0.jar \
+	/opt/kotlin-dist/kotlinc/lib/kotlin-stdlib.jar \
+	/opt/kotlin-dist/kotlinc/lib/kotlin-reflect.jar \
+	/opt/kotlin-dist/kotlinc/lib/kotlin-script-runtime.jar \
+	/opt/kotlin-dist/kotlinc/lib/kotlinx-coroutines-core-jvm.jar \
+	/usr/local/share/sandbox/
+COPY --from=kotlin-tools /out/sandbox-kotlin-compile /usr/local/bin/
+
 FROM runtime AS runner

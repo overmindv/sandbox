@@ -1,0 +1,9 @@
+services:
+  gojudge:
+    build:
+      target: kotlin-runner
+    image: overmindv/sandbox-gojudge-kotlin:2.4.21
+  gojudge-compiler:
+    build:
+      target: kotlin-compiler
+    image: overmindv/sandbox-gojudge-kotlin-compiler:2.4.21

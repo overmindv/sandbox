@@ -70,3 +70,16 @@ jobs:
       - name: Build the Java runner and compiler
         run: docker compose -f docker-compose.yml -f docker-compose.java.yml build gojudge gojudge-compiler
       - run: sh scripts/test-compiled-live.sh java
+
+  kotlin-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the Kotlin runner and compiler
+        run: docker compose -f docker-compose.yml -f docker-compose.kotlin.yml build gojudge gojudge-compiler
+      - run: sh scripts/test-compiled-live.sh kotlin
