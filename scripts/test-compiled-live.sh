@@ -11,7 +11,7 @@ case "${1:-}" in
         worker_binary=${SANDBOX_CPP_WORKER_TEST_BINARY:-}
         count=${SANDBOX_CPP_TEST_COUNT:-1}
         integration=SANDBOX_GOJUDGE_CPP_INTEGRATION
-        executor_tests='^TestLiveGoJudge(CPP|C17)$'
+        executor_tests='^TestLiveGoJudge(CPP|C17|SQLite)$'
         worker_tests='^TestLiveWorkerExecutes(CPP|C17)$'
         ;;
     java)
@@ -208,7 +208,11 @@ run_tests() {
         --entrypoint /fixture/test "$runner_image" -test.v "$@"
 }
 
-run_tests "$binary" -test.run "$executor_tests" -test.count "$count"
+if [ "$profile" = cpp ]; then
+    SANDBOX_GOJUDGE_INTEGRATION=1 run_tests "$binary" -test.run "$executor_tests" -test.count "$count"
+else
+    run_tests "$binary" -test.run "$executor_tests" -test.count "$count"
+fi
 run_tests "$worker_binary" -test.run "$worker_tests"
 if [ "$profile" = swift ]; then
     SANDBOX_GOJUDGE_INTEGRATION=1 run_tests "$worker_binary" -test.run '^TestLiveWorkerBuildsGoOutsideRunTimeout$'

@@ -9,6 +9,7 @@ import (
 	"overmindv/sandbox/internal/execution"
 	golang "overmindv/sandbox/internal/languages/go"
 	"overmindv/sandbox/internal/languages/python"
+	"overmindv/sandbox/internal/languages/sqlite"
 )
 
 func ExecutionResultFromResponse(command execution.ExecutionCommand, response Result) execution.ExecutionResult {
@@ -188,7 +189,17 @@ func ExecutionResultFromResponseBatch(command execution.ExecutionCommand, result
 	cases := make([]execution.ExecutionCaseResult, 0, len(results))
 	var memoryPeak int64
 	status := contracts.StatusOK
+	fixtureFailed := false
 	for i, response := range results {
+		if command.Adapter == sqlite.AdapterName && response.Status == StatusNonzeroExitStatus {
+			switch response.ExitStatus {
+			case sqlite.FixtureExitCode:
+				fixtureFailed = true
+				response.Status = StatusInternalError
+			case sqlite.OutputExitCode:
+				response.Status = StatusOutputLimitExceeded
+			}
+		}
 		run := caseExecutionResult(response, i)
 		if run.Status != contracts.StatusOK && severity(run.Status) > severity(status) {
 			status = run.Status
@@ -206,6 +217,10 @@ func ExecutionResultFromResponseBatch(command execution.ExecutionCommand, result
 	}
 	if status != contracts.StatusOK {
 		result.Error = &contracts.RunError{Code: caseErrorCode(status), Message: string(status), Retryable: false}
+	}
+	if fixtureFailed {
+		result.Status = contracts.StatusInternalError
+		result.Error = &contracts.RunError{Code: "checker_error", Message: "invalid SQLite test fixture", Retryable: false}
 	}
 	return result
 }

@@ -9,6 +9,44 @@ The registry loads `configs/languages.yaml`, resolves `language.id` and `languag
 Python and Go are enabled by default. JavaScript, C, and C++ need an explicit
 manifest change and their corresponding images.
 
+## SQLite Read Queries
+
+`language.id=sqlite` and `language.version=3.46` use SQLite 3.46.1 from the
+go-judge Python runtime. The adapter is disabled in the default manifest until
+Tasks and Gateway accept SQLite submissions. PostgreSQL is not supported.
+
+Send one UTF-8 `solution.sql` file and use `execution.mode=execution`. Each stdin
+case contains a separate JSON dataset:
+
+```json
+{
+  "ordered": false,
+  "tables": [
+    {
+      "name": "items",
+      "columns": [{"name": "id", "type": "INTEGER"}],
+      "rows": [[2], [1], [2]]
+    }
+  ]
+}
+```
+
+The runner loads only data into a new in-memory database. Table and column names
+are ASCII identifiers. Columns accept `INTEGER`, `REAL`, and `TEXT` with JSON
+nulls. The runner executes one read-only query. It rejects writes, attachments,
+pragmas, and functions outside the built-in query allowlist.
+
+Stdout is a compact UTF-8 JSON array of rows. When `ordered` is false the runner
+sorts rows by their JSON bytes, keeping duplicates. When it is true, the query
+must specify the expected order. The caller compares these rows to the trusted
+expected result. Neither the expected rows nor private diagnostics belong in the
+public submission response.
+
+Queries are limited to 64 KiB; datasets to 256 KiB, 16 tables, 64 columns per
+table, and 10,000 rows total. A result is limited to 4,096 rows and the request's
+stdout budget. go-judge enforces the wall, CPU, and memory limits. Invalid test
+data returns a checker error, not a wrong answer.
+
 ## Python Source Files
 
 Python submissions use `language.id=python` and `tests.mode=pytest`.
