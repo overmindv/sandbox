@@ -20,6 +20,7 @@ import (
 	"overmindv/sandbox/internal/languages/jvm"
 	"overmindv/sandbox/internal/languages/native"
 	pythonadapter "overmindv/sandbox/internal/languages/python"
+	"overmindv/sandbox/internal/languages/sqlite"
 	"overmindv/sandbox/internal/languages/typescript"
 	"overmindv/sandbox/internal/observability"
 	"overmindv/sandbox/internal/scheduler"
@@ -113,7 +114,7 @@ func newPipeline(cfg config.Config, logger *observability.Logger, deps WorkerDep
 		}
 		languageRegistry, err = languages.NewRegistry(manifest,
 			pythonadapter.NewAdapter(), golangadapter.NewAdapter(), javascript.NewAdapter(), native.CPP17(), native.C17(),
-			jvm.Java(), jvm.Kotlin(), typescript.Adapter{}, csharp.Adapter{}, native.Swift())
+			jvm.Java(), jvm.Kotlin(), typescript.Adapter{}, csharp.Adapter{}, native.Swift(), sqlite.Adapter{})
 		if err != nil {
 			return nil, nil, nil, err
 		}

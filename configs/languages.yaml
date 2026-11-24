@@ -46,6 +46,30 @@ languages:
             PYTHONUNBUFFERED: "1"
             PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
+  - id: sqlite
+    display_name: SQLite
+    enabled: false
+    adapter: sqlite
+    versions:
+      - version: "3.46"
+        default: true
+        runtime_image: overmindv/sandbox-gojudge:local
+        runtime_version: "3.46.1"
+        limits_profile: default
+        test_modes: []
+        file_policy:
+          max_files: 1
+          allowed_extensions:
+            - .sql
+          default_entrypoint: solution.sql
+        execution:
+          kind: interpreted
+          working_dir: /workspace
+          command:
+            argv:
+              - python3
+          environment: {}
+
   - id: javascript
     display_name: JavaScript
     enabled: false

@@ -34,6 +34,8 @@ jobs:
           python scripts/check_execution_contract.py
       - name: Check runtime isolation preflight
         run: python -m unittest discover -s scripts -p test_runtime_isolation.py
+      - name: Test SQLite query runner
+        run: python -m unittest discover -s internal/languages/sqlite -p test_runner.py
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
